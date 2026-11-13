@@ -1,0 +1,615 @@
+<?php
+/**
+ * Plugin Name: Auto Post WordPress AI
+ * Plugin URI: https://github.com/Diegaosx/Auto-post-wordpress-ai
+ * Description: Sincronização automatizada e publicação de artigos com Inteligência Artificial via REST API segura.
+ * Version: 1.0.0
+ * Author: Auto Post AI Team
+ * License: GPL v2 or later
+ * Text Domain: auto-post-wordpress-ai
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+define('AUTO_POST_AI_VERSION', '1.0.0');
+define('AUTO_POST_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('AUTO_POST_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('AUTO_POST_AI_DEFAULT_API_URL', '{{API_URL}}');
+
+class AutoPostWordPressAI {
+
+    private $api_key;
+    private $api_url;
+
+    public function __construct() {
+        add_action('init', array($this, 'init'));
+        add_action('admin_menu', array($this, 'add_admin_menu'));
+        add_action('rest_api_init', array($this, 'register_rest_routes'));
+        add_action('wp_ajax_autopost_test_connection', array($this, 'ajax_test_connection'));
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+    }
+
+    public function init() {
+        $this->api_key = get_option('autopost_ai_api_key', '');
+        $this->api_url = get_option('autopost_ai_api_url', '');
+
+        if (empty($this->api_url) || $this->api_url === '{{API_URL}}') {
+            $default = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
+                ? AUTO_POST_AI_DEFAULT_API_URL
+                : 'http://localhost:3000';
+            $this->api_url = $default;
+            update_option('autopost_ai_api_url', $this->api_url);
+        }
+    }
+
+    public function activate() {
+        add_option('autopost_ai_api_key', '');
+        add_option('autopost_ai_api_url', 'http://localhost:3000');
+        add_option('autopost_ai_status', 'disconnected');
+        add_option('autopost_ai_last_sync', 'Nunca');
+        flush_rewrite_rules();
+    }
+
+    public function deactivate() {
+        flush_rewrite_rules();
+    }
+
+    public function add_admin_menu() {
+        add_menu_page(
+            'Auto Post AI',
+            'Auto Post AI',
+            'manage_options',
+            'auto-post-ai',
+            array($this, 'render_admin_page'),
+            'dashicons-superhero',
+            65
+        );
+    }
+
+    public function render_admin_page() {
+        if (isset($_POST['autopost_save_settings']) && check_admin_referer('autopost_save_nonce', 'autopost_nonce_field')) {
+            $new_key = sanitize_text_field($_POST['api_key'] ?? '');
+            $new_url = esc_url_raw(rtrim($_POST['api_url'] ?? '', '/'));
+
+            if (!empty($new_key)) {
+                update_option('autopost_ai_api_key', $new_key);
+                $this->api_key = $new_key;
+            }
+            if (!empty($new_url)) {
+                update_option('autopost_ai_api_url', $new_url);
+                $this->api_url = $new_url;
+            }
+
+            echo '<div class="notice notice-success is-dismissible"><p>Configurações salvas com sucesso!</p></div>';
+            $this->verify_license_connection();
+        }
+
+        $api_key = get_option('autopost_ai_api_key', '');
+        $api_url = get_option('autopost_ai_api_url', 'http://localhost:3000');
+        $status = get_option('autopost_ai_status', 'disconnected');
+        $last_sync = get_option('autopost_ai_last_sync', 'Nunca');
+        ?>
+        <div class="wrap" style="max-width: 900px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 20px; margin-bottom: 20px; background: #0f172a; color: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
+                <div>
+                    <h1 style="color: #38bdf8; margin: 0; font-size: 24px; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        ⚡ Auto Post WordPress AI
+                    </h1>
+                    <p style="color: #94a3b8; margin: 6px 0 0 0; font-size: 14px;">
+                        Módulo de recepção e sincronização de artigos inteligentes.
+                    </p>
+                </div>
+                <div>
+                    <?php if ($status === 'connected'): ?>
+                        <span style="background: #166534; color: #4ade80; padding: 6px 14px; border-radius: 9999px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                            ● Conectado
+                        </span>
+                    <?php elseif ($status === 'pending'): ?>
+                        <span style="background: #854d0e; color: #fef08a; padding: 6px 14px; border-radius: 9999px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                            ● Aguardando Validação
+                        </span>
+                    <?php else: ?>
+                        <span style="background: #991b1b; color: #fca5a5; padding: 6px 14px; border-radius: 9999px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+                            ● Desconectado
+                        </span>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 24px;">
+                <h2 style="font-size: 18px; font-weight: 600; color: #1e293b; margin-top: 0; border-bottom: 1px solid #f1f5f9; padding-bottom: 12px;">
+                    Chave de Licença e Conexão da API
+                </h2>
+
+                <form method="post" action="">
+                    <?php wp_nonce_field('autopost_save_nonce', 'autopost_nonce_field'); ?>
+                    <table class="form-table" role="presentation">
+                        <tr>
+                            <th scope="row" style="width: 200px;">
+                                <label for="api_key" style="font-weight: 600; color: #334155;">Chave de Licença (API Key)</label>
+                            </th>
+                            <td>
+                                <input 
+                                    name="api_key" 
+                                    type="password" 
+                                    id="api_key" 
+                                    value="<?php echo esc_attr($api_key); ?>" 
+                                    class="regular-text" 
+                                    style="width: 100%; max-width: 500px; font-family: monospace; font-size: 14px; padding: 8px 12px; border-radius: 6px;"
+                                    placeholder="Ex: APAI-XXXX-XXXX-XXXX"
+                                />
+                                <p class="description" style="color: #64748b; margin-top: 6px;">
+                                    Obtenha sua chave no painel do Auto Post AI na aba <strong>Sites WordPress</strong>.
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="api_url" style="font-weight: 600; color: #334155;">URL do Painel / Servidor</label>
+                            </th>
+                            <td>
+                                <input 
+                                    name="api_url" 
+                                    type="url" 
+                                    id="api_url" 
+                                    value="<?php echo esc_attr($api_url); ?>" 
+                                    class="regular-text" 
+                                    style="width: 100%; max-width: 500px; font-size: 14px; padding: 8px 12px; border-radius: 6px;"
+                                    placeholder="https://seu-painel-autopost.com"
+                                />
+                                <p class="description" style="color: #64748b; margin-top: 6px;">
+                                    Endereço do seu backend (ex: https://seu-dominio.up.railway.app ou http://localhost:3000).
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div style="margin-top: 24px; display: flex; align-items: center; gap: 12px;">
+                        <input type="submit" name="autopost_save_settings" class="button button-primary" value="Salvar Configurações" style="padding: 6px 20px; font-size: 14px; height: auto;" />
+                        <button type="button" id="btn-test-connection" class="button button-secondary" style="padding: 6px 18px; font-size: 14px; height: auto;">
+                            Testar Conexão Agora
+                        </button>
+                        <span id="test-connection-spinner" class="spinner" style="float: none; margin: 0;"></span>
+                    </div>
+                </form>
+
+                <div id="test-result-box" style="margin-top: 16px; display: none;"></div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px;">
+                    <h3 style="margin-top: 0; color: #334155; font-size: 15px; font-weight: 600;">Status da Instalação</h3>
+                    <ul style="margin: 0; padding: 0; list-style: none; font-size: 13px; color: #475569; line-height: 2;">
+                        <li><strong>Versão do Plugin:</strong> <?php echo AUTO_POST_AI_VERSION; ?></li>
+                        <li><strong>URL do Site:</strong> <code><?php echo esc_html(get_site_url()); ?></code></li>
+                        <li><strong>Última Sincronização:</strong> <?php echo esc_html($last_sync); ?></li>
+                        <li><strong>REST API Endpoint:</strong> <code>/wp-json/autopost-ai/v1/posts</code></li>
+                    </ul>
+                </div>
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px;">
+                    <h3 style="margin-top: 0; color: #334155; font-size: 15px; font-weight: 600;">Recursos Compatíveis</h3>
+                    <ul style="margin: 0; padding: 0; list-style: none; font-size: 13px; color: #475569; line-height: 2;">
+                        <li>✅ Publicação Direta e Rascunho</li>
+                        <li>✅ Download e Destaque de Imagem Automático</li>
+                        <li>✅ Criação Dinâmica de Tags e Categorias</li>
+                        <li>✅ Meta Tags SEO (Yoast, RankMath, All In One)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        jQuery(document).ready(function($) {
+            $('#btn-test-connection').on('click', function(e) {
+                e.preventDefault();
+                var btn = $(this);
+                var spinner = $('#test-connection-spinner');
+                var resultBox = $('#test-result-box');
+
+                btn.prop('disabled', true);
+                spinner.addClass('is-active');
+                resultBox.hide();
+
+                $.post(ajaxurl, {
+                    action: 'autopost_test_connection',
+                    _ajax_nonce: '<?php echo wp_create_nonce('autopost_test_nonce'); ?>'
+                }, function(response) {
+                    if (response.success) {
+                        resultBox.html('<div class="notice notice-success inline" style="margin: 0; padding: 12px;"><p><strong>✅ Sucesso:</strong> ' + response.data.message + '</p></div>').fadeIn();
+                        setTimeout(function() { location.reload(); }, 1200);
+                    } else {
+                        resultBox.html('<div class="notice notice-error inline" style="margin: 0; padding: 12px;"><p><strong>❌ Erro:</strong> ' + (response.data ? response.data.message : 'Falha na conexão com o servidor') + '</p></div>').fadeIn();
+                    }
+                }).fail(function() {
+                    resultBox.html('<div class="notice notice-error inline" style="margin: 0; padding: 12px;"><p><strong>❌ Falha na requisição Ajax.</strong></p></div>').fadeIn();
+                }).always(function() {
+                    btn.prop('disabled', false);
+                    spinner.removeClass('is-active');
+                });
+            });
+        });
+        </script>
+        <?php
+    }
+
+    public function ajax_test_connection() {
+        check_ajax_referer('autopost_test_nonce');
+        $success = $this->verify_license_connection();
+
+        if ($success) {
+            wp_send_json_success(array('message' => 'Site validado e conectado com sucesso ao painel Auto Post AI!'));
+        } else {
+            wp_send_json_error(array('message' => 'Não foi possível validar a chave de licença no painel. Verifique a URL do servidor e a chave digitada.'));
+        }
+    }
+
+    public function verify_license_connection() {
+        $api_key = get_option('autopost_ai_api_key', '');
+        $api_url = get_option('autopost_ai_api_url', '');
+
+        if (empty($api_key) || empty($api_url)) {
+            update_option('autopost_ai_status', 'disconnected');
+            return false;
+        }
+
+        $endpoint = rtrim($api_url, '/') . '/api/wordpress/verify';
+        $payload = array(
+            'api_key' => $api_key,
+            'site_url' => get_site_url(),
+            'site_name' => get_bloginfo('name'),
+            'version' => AUTO_POST_AI_VERSION,
+        );
+
+        $response = wp_remote_post($endpoint, array(
+            'headers' => array('Content-Type' => 'application/json'),
+            'body' => json_encode($payload),
+            'timeout' => 15,
+            'sslverify' => false,
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('AutoPost AI Error: ' . $response->get_error_message());
+            update_option('autopost_ai_status', 'error');
+            return false;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        if ($code >= 200 && $code < 300 && !empty($data['success'])) {
+            update_option('autopost_ai_status', 'connected');
+            update_option('autopost_ai_last_sync', current_time('mysql'));
+            return true;
+        }
+
+        update_option('autopost_ai_status', 'error');
+        return false;
+    }
+
+    public function register_rest_routes() {
+        $namespace = 'autopost-ai/v1';
+
+        // 1. Status
+        register_rest_route($namespace, '/status', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_status'),
+            'permission_callback' => '__return_true',
+        ));
+
+        // 2. Posts (Listar / Criar)
+        register_rest_route($namespace, '/posts', array(
+            array(
+                'methods' => 'GET',
+                'callback' => array($this, 'rest_get_posts'),
+                'permission_callback' => array($this, 'rest_verify_auth'),
+            ),
+            array(
+                'methods' => 'POST',
+                'callback' => array($this, 'rest_create_post'),
+                'permission_callback' => array($this, 'rest_verify_auth'),
+            ),
+        ));
+
+        // 3. Posts por ID (Atualizar)
+        register_rest_route($namespace, '/posts/(?P<id>\d+)', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'rest_update_post'),
+            'permission_callback' => array($this, 'rest_verify_auth'),
+            'args' => array(
+                'id' => array(
+                    'validate_callback' => function($param) {
+                        return is_numeric($param);
+                    }
+                )
+            )
+        ));
+
+        // 4. Categorias e Tags
+        register_rest_route($namespace, '/categories', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_categories'),
+            'permission_callback' => array($this, 'rest_verify_auth'),
+        ));
+        register_rest_route($namespace, '/tags', array(
+            'methods' => 'GET',
+            'callback' => array($this, 'rest_get_tags'),
+            'permission_callback' => array($this, 'rest_verify_auth'),
+        ));
+
+        // 5. Mídia direta
+        register_rest_route($namespace, '/media', array(
+            'methods' => 'POST',
+            'callback' => array($this, 'rest_upload_media'),
+            'permission_callback' => array($this, 'rest_verify_auth'),
+        ));
+    }
+
+    public function rest_verify_auth($request) {
+        $saved_key = get_option('autopost_ai_api_key', '');
+        if (empty($saved_key)) {
+            return new WP_Error('rest_forbidden', 'Plugin ainda não possui Chave de Licença configurada.', array('status' => 403));
+        }
+
+        $provided_key = $request->get_header('x-api-key');
+        if (empty($provided_key)) {
+            $auth = $request->get_header('authorization');
+            if ($auth && preg_match('/Bearer\s+(.*)$/i', $auth, $matches)) {
+                $provided_key = $matches[1];
+            }
+        }
+
+        if (empty($provided_key) || !hash_equals($saved_key, $provided_key)) {
+            return new WP_Error('rest_forbidden', 'Chave de Licença (X-API-Key) inválida ou não autorizada.', array('status' => 401));
+        }
+
+        return true;
+    }
+
+    public function rest_get_status() {
+        return array(
+            'plugin' => 'Auto Post WordPress AI',
+            'version' => AUTO_POST_AI_VERSION,
+            'status' => get_option('autopost_ai_status', 'disconnected'),
+            'site_url' => get_site_url(),
+            'site_name' => get_bloginfo('name'),
+            'last_sync' => get_option('autopost_ai_last_sync', 'Nunca'),
+        );
+    }
+
+    public function rest_get_posts($request) {
+        $per_page = intval($request->get_param('per_page') ?: 10);
+        $status = sanitize_text_field($request->get_param('status') ?: 'any');
+
+        $args = array(
+            'numberposts' => min($per_page, 50),
+            'post_type' => 'post',
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'post_status' => $status === 'any' ? array('publish', 'draft', 'pending') : $status,
+        );
+
+        $posts = get_posts($args);
+        $result = array();
+
+        foreach ($posts as $p) {
+            $thumbnail = get_the_post_thumbnail_url($p->ID, 'full');
+            $result[] = array(
+                'id' => $p->ID,
+                'title' => $p->post_title,
+                'excerpt' => $p->post_excerpt,
+                'status' => $p->post_status,
+                'date' => $p->post_date,
+                'permalink' => get_permalink($p->ID),
+                'featured_image' => $thumbnail ?: null,
+            );
+        }
+
+        return rest_ensure_response(array('success' => true, 'data' => $result));
+    }
+
+    public function rest_create_post($request) {
+        $body = $request->get_json_params();
+
+        $title = sanitize_text_field($body['title'] ?? '');
+        $content = wp_kses_post($body['content'] ?? '');
+        $excerpt = sanitize_text_field($body['excerpt'] ?? '');
+        $status = in_array($body['status'] ?? '', array('publish', 'draft', 'pending')) ? $body['status'] : 'draft';
+        $category_names = $body['categories'] ?? array();
+        $tag_names = $body['tags'] ?? array();
+        $image_url = esc_url_raw($body['image_url'] ?? $body['featured_image'] ?? '');
+        $meta_data = $body['meta'] ?? array();
+
+        if (empty($title) || empty($content)) {
+            return new WP_Error('invalid_payload', 'Título e Conteúdo são campos obrigatórios.', array('status' => 400));
+        }
+
+        // Mapear ou criar categorias
+        $cat_ids = array();
+        if (!empty($category_names)) {
+            if (!is_array($category_names)) {
+                $category_names = array($category_names);
+            }
+            foreach ($category_names as $cname) {
+                $term = term_exists($cname, 'category');
+                if ($term) {
+                    $cat_ids[] = (int) (is_array($term) ? $term['term_id'] : $term);
+                } else {
+                    $created = wp_create_category($cname);
+                    if ($created && !is_wp_error($created)) {
+                        $cat_ids[] = (int) $created;
+                    }
+                }
+            }
+        }
+
+        $post_arr = array(
+            'post_title' => $title,
+            'post_content' => $content,
+            'post_excerpt' => $excerpt,
+            'post_status' => $status,
+            'post_type' => 'post',
+            'post_category' => $cat_ids,
+            'tags_input' => $tag_names,
+        );
+
+        $post_id = wp_insert_post($post_arr, true);
+
+        if (is_wp_error($post_id)) {
+            return new WP_Error('post_insert_failed', $post_id->get_error_message(), array('status' => 500));
+        }
+
+        // Meta fields de SEO (Yoast, RankMath, etc.)
+        if (!empty($meta_data) && is_array($meta_data)) {
+            foreach ($meta_data as $meta_key => $meta_val) {
+                update_post_meta($post_id, sanitize_key($meta_key), sanitize_text_field($meta_val));
+            }
+        }
+
+        if (!empty($body['seo_title'])) {
+            update_post_meta($post_id, '_yoast_wpseo_title', sanitize_text_field($body['seo_title']));
+            update_post_meta($post_id, 'rank_math_title', sanitize_text_field($body['seo_title']));
+        }
+        if (!empty($body['seo_description'])) {
+            update_post_meta($post_id, '_yoast_wpseo_metadesc', sanitize_text_field($body['seo_description']));
+            update_post_meta($post_id, 'rank_math_description', sanitize_text_field($body['seo_description']));
+        }
+
+        // Salvar referência da origem
+        update_post_meta($post_id, '_autopost_ai_generated', '1');
+        update_post_meta($post_id, '_autopost_ai_sync_date', current_time('mysql'));
+        if (!empty($body['source_url'])) {
+            update_post_meta($post_id, '_autopost_ai_source_url', esc_url_raw($body['source_url']));
+        }
+
+        // Anexar imagem em destaque
+        $featured_thumb_id = null;
+        if (!empty($image_url)) {
+            $featured_thumb_id = $this->sideload_featured_image($image_url, $post_id, $title);
+        }
+
+        update_option('autopost_ai_last_sync', current_time('mysql'));
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'post_id' => $post_id,
+            'status' => $status,
+            'permalink' => get_permalink($post_id),
+            'featured_image_id' => $featured_thumb_id,
+        ));
+    }
+
+    public function rest_update_post($request) {
+        $post_id = intval($request->get_param('id'));
+        $body = $request->get_json_params();
+
+        if (!$post_id || !get_post($post_id)) {
+            return new WP_Error('not_found', 'Post não encontrado', array('status' => 404));
+        }
+
+        $update_arr = array('ID' => $post_id);
+        if (!empty($body['title'])) $update_arr['post_title'] = sanitize_text_field($body['title']);
+        if (!empty($body['content'])) $update_arr['post_content'] = wp_kses_post($body['content']);
+        if (!empty($body['status'])) $update_arr['post_status'] = sanitize_text_field($body['status']);
+
+        $res = wp_update_post($update_arr, true);
+        if (is_wp_error($res)) {
+            return new WP_Error('update_failed', $res->get_error_message(), array('status' => 500));
+        }
+
+        if (!empty($body['image_url'])) {
+            $this->sideload_featured_image($body['image_url'], $post_id, $body['title'] ?? '');
+        }
+
+        return rest_ensure_response(array(
+            'success' => true,
+            'post_id' => $post_id,
+            'permalink' => get_permalink($post_id),
+        ));
+    }
+
+    public function rest_get_categories() {
+        $cats = get_categories(array('hide_empty' => false));
+        $res = array();
+        foreach ($cats as $c) {
+            $res[] = array(
+                'id' => $c->term_id,
+                'name' => $c->name,
+                'slug' => $c->slug,
+                'count' => $c->count,
+            );
+        }
+        return rest_ensure_response(array('success' => true, 'data' => $res));
+    }
+
+    public function rest_get_tags() {
+        $tags = get_tags(array('hide_empty' => false));
+        $res = array();
+        foreach ($tags as $t) {
+            $res[] = array(
+                'id' => $t->term_id,
+                'name' => $t->name,
+                'slug' => $t->slug,
+            );
+        }
+        return rest_ensure_response(array('success' => true, 'data' => $res));
+    }
+
+    public function rest_upload_media($request) {
+        $body = $request->get_json_params();
+        $image_url = esc_url_raw($body['image_url'] ?? '');
+
+        if (empty($image_url)) {
+            return new WP_Error('invalid_url', 'URL da imagem é obrigatória', array('status' => 400));
+        }
+
+        $attach_id = $this->sideload_featured_image($image_url, 0, $body['title'] ?? 'Imagem Auto Post AI');
+        if ($attach_id) {
+            return rest_ensure_response(array(
+                'success' => true,
+                'id' => $attach_id,
+                'url' => wp_get_attachment_url($attach_id),
+            ));
+        }
+
+        return new WP_Error('upload_failed', 'Não foi possível baixar ou salvar a imagem', array('status' => 500));
+    }
+
+    private function sideload_featured_image($image_url, $post_id, $desc = '') {
+        require_once(ABSPATH . 'wp-admin/includes/media.php');
+        require_once(ABSPATH . 'wp-admin/includes/file.php');
+        require_once(ABSPATH . 'wp-admin/includes/image.php');
+
+        $tmp = download_url($image_url);
+        if (is_wp_error($tmp)) {
+            return null;
+        }
+
+        $file_array = array(
+            'name' => basename(parse_url($image_url, PHP_URL_PATH)) ?: 'featured-image.jpg',
+            'tmp_name' => $tmp,
+        );
+
+        if (!preg_match('/\.(jpg|jpeg|png|webp|gif)$/i', $file_array['name'])) {
+            $file_array['name'] .= '.jpg';
+        }
+
+        $id = media_handle_sideload($file_array, $post_id, $desc);
+
+        if (is_wp_error($id)) {
+            @unlink($tmp);
+            return null;
+        }
+
+        if ($post_id > 0) {
+            set_post_thumbnail($post_id, $id);
+        }
+
+        return $id;
+    }
+}
+
+new AutoPostWordPressAI();

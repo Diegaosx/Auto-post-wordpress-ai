@@ -43,6 +43,8 @@ export interface Translations {
   };
   nav: {
     dashboard: string;
+    scraper: string;
+    wordpress: string;
     users: string;
     profile: string;
     signOut: string;
@@ -184,6 +186,8 @@ export const translations: Record<Locale, Translations> = {
     },
     nav: {
       dashboard: 'Dashboard',
+      scraper: 'Portais & Scraping',
+      wordpress: 'Sites WordPress',
       users: 'Usuários',
       profile: 'Perfil',
       signOut: 'Sair',
@@ -323,6 +327,8 @@ export const translations: Record<Locale, Translations> = {
     },
     nav: {
       dashboard: 'Dashboard',
+      scraper: 'Portales & Scraping',
+      wordpress: 'Sitios WordPress',
       users: 'Usuarios',
       profile: 'Perfil',
       signOut: 'Salir',
@@ -462,6 +468,8 @@ export const translations: Record<Locale, Translations> = {
     },
     nav: {
       dashboard: 'Dashboard',
+      scraper: 'News Scraper',
+      wordpress: 'WordPress Sites',
       users: 'Users',
       profile: 'Profile',
       signOut: 'Sign out',

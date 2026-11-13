@@ -1,5 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import * as archiverModule from 'archiver';
+const archiver = (archiverModule as any).default || archiverModule;
 import { createServer as createViteServer } from 'vite';
 import { env } from './src/server/config/env';
 import {
@@ -19,6 +22,8 @@ import { dbRepo } from './src/server/db/repository';
 import { queueCacheManager } from './src/server/infra/queue-cache';
 import { executeLlmPrompt } from './src/server/services/llm-gateway';
 import { mailService } from './src/server/services/mail-service';
+import { scrapeSource, rewriteArticleWithAi } from './src/server/services/scraper-service';
+import { syncArticleToWordPress, testWordPressConnection } from './src/server/services/wordpress-sync';
 import {
   UserRole,
   UserStatus,
@@ -26,6 +31,9 @@ import {
   InfrastructureStatus,
   LLMProviderId,
   QueueJobRecord,
+  WordPressSite,
+  NewsSource,
+  CapturedArticle,
 } from './src/shared/types';
 
 interface AuthenticatedRequest extends Request {
@@ -868,6 +876,321 @@ async function startServer() {
     }
 
     res.json({ received: true });
+  });
+
+  // ==========================================================================
+  // WORDPRESS SITES, LICENSING & PLUGIN ENDPOINTS
+  // ==========================================================================
+  
+  // Public Endpoint: Plugin Verification from WordPress
+  app.post('/api/wordpress/verify', (req: Request, res: Response) => {
+    const { api_key, site_url, site_name, version } = req.body || {};
+
+    if (!api_key) {
+      res.status(400).json({ success: false, message: 'Chave de Licença (api_key) é obrigatória.' });
+      return;
+    }
+
+    const site = dbRepo.getWordPressSiteByApiKey(api_key);
+    if (!site) {
+      dbRepo.appendAuditLog({
+        actorId: null,
+        actorEmail: 'wordpress-plugin',
+        actorRole: 'external',
+        action: 'WP_LICENSE_VALIDATION_FAILED',
+        category: 'wordpress',
+        resource: site_url || '/api/wordpress/verify',
+        status: 'warning',
+        ipAddress: getClientIp(req),
+        latencyMs: 5,
+        metadata: { attemptedApiKey: api_key.slice(0, 10) + '...', siteUrl: site_url },
+      });
+
+      res.status(401).json({ success: false, message: 'Chave de Licença não encontrada ou revogada.' });
+      return;
+    }
+
+    // Atualiza status do site e URL informada se diferente
+    const updates: Partial<WordPressSite> = {
+      status: 'connected',
+      lastSyncAt: new Date().toISOString(),
+    };
+    if (site_url && (!site.siteUrl || site.siteUrl.includes('exemplo'))) {
+      updates.siteUrl = site_url;
+    }
+    if (site_name && !site.siteName) {
+      updates.siteName = site_name;
+    }
+    dbRepo.updateWordPressSite(site.id, updates);
+
+    dbRepo.appendWordPressLog({
+      siteId: site.id,
+      siteName: site.siteName,
+      action: 'LICENSE_VERIFIED',
+      status: 'success',
+      message: `Plugin WordPress conectado com sucesso via ${site_url || site.siteUrl} (versão plugin: ${version || '1.0.0'})`,
+      details: { version, ip: getClientIp(req) },
+    });
+
+    res.json({
+      success: true,
+      site_id: site.id,
+      site_name: site.siteName,
+      message: 'Licença ativa e site conectado com sucesso!',
+    });
+  });
+
+  // Download Plugin ZIP
+  app.get('/api/wordpress/plugin/download', (_req: Request, res: Response) => {
+    const pluginDir = path.resolve(process.cwd(), 'wordpress-plugin', 'auto-post-wordpress-ai');
+    res.attachment('auto-post-wordpress-ai.zip');
+    res.setHeader('Content-Type', 'application/zip');
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('error', (err: any) => {
+      console.error('[Plugin Download Error]', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Erro ao gerar arquivo ZIP do plugin.' });
+    });
+
+    archive.pipe(res);
+    archive.directory(pluginDir, 'auto-post-wordpress-ai');
+    archive.finalize();
+  });
+
+  // List user's WordPress Sites
+  app.get('/api/wordpress/sites', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.auth?.role === UserRole.ADMIN ? undefined : req.auth?.sub;
+    const sites = dbRepo.getWordPressSites(userId);
+    res.json(sites);
+  });
+
+  // Create WordPress Site & Generate License Key
+  app.post('/api/wordpress/sites', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const { siteName, siteUrl, defaultCategory, defaultStatus, autoPublish } = req.body || {};
+
+    if (!siteName || !siteUrl) {
+      res.status(400).json({ error: 'Nome do site e URL são obrigatórios.' });
+      return;
+    }
+
+    const licenseKey = `APAI-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+
+    const newSite = dbRepo.createWordPressSite({
+      userId: req.auth!.sub,
+      siteName: sanitizeInput(siteName),
+      siteUrl: sanitizeInput(siteUrl),
+      apiKey: licenseKey,
+      status: 'pending',
+      lastSyncAt: null,
+      autoPublish: Boolean(autoPublish),
+      defaultStatus: defaultStatus === 'publish' ? 'publish' : 'draft',
+      defaultCategory: defaultCategory ? sanitizeInput(defaultCategory) : 'Geral',
+    });
+
+    dbRepo.appendWordPressLog({
+      siteId: newSite.id,
+      siteName: newSite.siteName,
+      action: 'SITE_CREATED',
+      status: 'success',
+      message: `Novo site cadastrado e chave de licença gerada (${licenseKey.slice(0, 9)}...)`,
+    });
+
+    res.status(201).json(newSite);
+  });
+
+  // Update WordPress Site
+  app.put('/api/wordpress/sites/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const site = dbRepo.getWordPressSiteById(req.params.id);
+    if (!site) {
+      res.status(404).json({ error: 'Site não encontrado.' });
+      return;
+    }
+    if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+      res.status(403).json({ error: 'Sem permissão para alterar este site.' });
+      return;
+    }
+
+    const updated = dbRepo.updateWordPressSite(req.params.id, req.body);
+    res.json(updated);
+  });
+
+  // Delete WordPress Site
+  app.delete('/api/wordpress/sites/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const site = dbRepo.getWordPressSiteById(req.params.id);
+    if (!site) {
+      res.status(404).json({ error: 'Site não encontrado.' });
+      return;
+    }
+    if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+      res.status(403).json({ error: 'Sem permissão para remover este site.' });
+      return;
+    }
+
+    dbRepo.deleteWordPressSite(req.params.id);
+    res.json({ success: true, message: 'Site removido com sucesso.' });
+  });
+
+  // Test WordPress Site Connection
+  app.post('/api/wordpress/sites/:id/test-connection', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await testWordPressConnection(req.params.id);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // WordPress Activity Logs
+  app.get('/api/wordpress/logs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const siteId = req.query.siteId as string | undefined;
+    const limit = Number(req.query.limit) || 50;
+    const logs = dbRepo.getWordPressLogs(siteId, limit);
+    res.json(logs);
+  });
+
+  // ==========================================================================
+  // NEWS SCRAPER & ARTICLES ENDPOINTS
+  // ==========================================================================
+
+  // List News Sources
+  app.get('/api/scraper/sources', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.auth?.role === UserRole.ADMIN ? undefined : req.auth?.sub;
+    const sources = dbRepo.getNewsSources(userId);
+    res.json(sources);
+  });
+
+  // Create News Source
+  app.post('/api/scraper/sources', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const { name, url, type, category, targetSiteId, autoRewrite, autoPublish } = req.body || {};
+
+    if (!name || !url) {
+      res.status(400).json({ error: 'Nome e URL da fonte são obrigatórios.' });
+      return;
+    }
+
+    const newSource = dbRepo.createNewsSource({
+      userId: req.auth!.sub,
+      name: sanitizeInput(name),
+      url: sanitizeInput(url),
+      type: type || 'rss',
+      category: category ? sanitizeInput(category) : 'Geral',
+      targetSiteId: targetSiteId || null,
+      active: true,
+      autoRewrite: Boolean(autoRewrite),
+      autoPublish: Boolean(autoPublish),
+      lastScrapedAt: null,
+      articlesCount: 0,
+    });
+
+    res.status(201).json(newSource);
+  });
+
+  // Update News Source
+  app.put('/api/scraper/sources/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const source = dbRepo.getNewsSourceById(req.params.id);
+    if (!source) {
+      res.status(404).json({ error: 'Fonte não encontrada.' });
+      return;
+    }
+    if (req.auth?.role !== UserRole.ADMIN && source.userId !== req.auth?.sub) {
+      res.status(403).json({ error: 'Sem permissão para alterar esta fonte.' });
+      return;
+    }
+
+    const updated = dbRepo.updateNewsSource(req.params.id, req.body);
+    res.json(updated);
+  });
+
+  // Delete News Source
+  app.delete('/api/scraper/sources/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const source = dbRepo.getNewsSourceById(req.params.id);
+    if (!source) {
+      res.status(404).json({ error: 'Fonte não encontrada.' });
+      return;
+    }
+    if (req.auth?.role !== UserRole.ADMIN && source.userId !== req.auth?.sub) {
+      res.status(403).json({ error: 'Sem permissão para remover esta fonte.' });
+      return;
+    }
+
+    dbRepo.deleteNewsSource(req.params.id);
+    res.json({ success: true, message: 'Fonte removida com sucesso.' });
+  });
+
+  // Trigger Scrape Run for Source
+  app.post('/api/scraper/sources/:id/scrape', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await scrapeSource(req.params.id);
+      res.json({
+        success: true,
+        message: `Scraping finalizado. ${result.newCaptured} novas notícias capturadas (${result.totalFound} encontradas no feed).`,
+        ...result,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // List Captured Articles
+  app.get('/api/scraper/articles', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const sourceId = req.query.sourceId as string | undefined;
+    const status = req.query.status as string | undefined;
+    const search = req.query.search as string | undefined;
+    const limit = Number(req.query.limit) || 100;
+
+    const articles = dbRepo.getCapturedArticles({ sourceId, status, search, limit });
+    res.json(articles);
+  });
+
+  // Get Captured Article by ID
+  app.get('/api/scraper/articles/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const article = dbRepo.getCapturedArticleById(req.params.id);
+    if (!article) {
+      res.status(404).json({ error: 'Artigo não encontrado.' });
+      return;
+    }
+    res.json(article);
+  });
+
+  // Rewrite Article with AI
+  app.post('/api/scraper/articles/:id/rewrite', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const updated = await rewriteArticleWithAi(req.params.id, req.body);
+      res.json({
+        success: true,
+        message: 'Artigo reescrito com sucesso pela IA!',
+        article: updated,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Publish Article to WordPress Site
+  app.post('/api/scraper/articles/:id/publish', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    const { siteId, status, category } = req.body || {};
+
+    if (!siteId) {
+      res.status(400).json({ error: 'ID do site WordPress é obrigatório.' });
+      return;
+    }
+
+    try {
+      const result = await syncArticleToWordPress(req.params.id, siteId, { status, category });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Delete Captured Article
+  app.delete('/api/scraper/articles/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const deleted = dbRepo.deleteCapturedArticle(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Artigo não encontrado.' });
+      return;
+    }
+    res.json({ success: true, message: 'Artigo removido.' });
   });
 
   // ==========================================================================

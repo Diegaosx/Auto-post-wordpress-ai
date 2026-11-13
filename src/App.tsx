@@ -10,9 +10,11 @@ import { AuthSplitScreen } from './components/AuthSplitScreen';
 import { DashboardView } from './components/DashboardView';
 import { UsersManagementView } from './components/UsersManagementView';
 import { ProfileView } from './components/ProfileView';
-import { LayoutDashboard, Users, UserCircle, LogOut, Menu, X } from 'lucide-react';
+import { ScraperView } from './components/ScraperView';
+import { WordPressSitesView } from './components/WordPressSitesView';
+import { LayoutDashboard, Newspaper, Globe, Users, UserCircle, LogOut, Menu, X } from 'lucide-react';
 
-type ActiveTab = 'dashboard' | 'users' | 'profile';
+type ActiveTab = 'dashboard' | 'scraper' | 'wordpress' | 'users' | 'profile';
 
 export default function App() {
   const [locale, setLocale] = useState<Locale>('pt-BR');
@@ -75,6 +77,32 @@ export default function App() {
       >
         <LayoutDashboard className="w-4 h-4 shrink-0" />
         <span>{t.nav.dashboard}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => handleSelectTab('scraper')}
+        className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          effectiveTab === 'scraper'
+            ? 'bg-slate-900 text-white'
+            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+        }`}
+      >
+        <Newspaper className="w-4 h-4 shrink-0" />
+        <span>{t.nav.scraper}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => handleSelectTab('wordpress')}
+        className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+          effectiveTab === 'wordpress'
+            ? 'bg-slate-900 text-white'
+            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+        }`}
+      >
+        <Globe className="w-4 h-4 shrink-0" />
+        <span>{t.nav.wordpress}</span>
       </button>
 
       {isAdmin && (
@@ -226,6 +254,8 @@ export default function App() {
               <span aria-hidden="true">/</span>
               <span className="text-slate-600 truncate">
                 {effectiveTab === 'dashboard' && t.nav.dashboard}
+                {effectiveTab === 'scraper' && t.nav.scraper}
+                {effectiveTab === 'wordpress' && t.nav.wordpress}
                 {effectiveTab === 'users' && t.nav.users}
                 {effectiveTab === 'profile' && t.nav.profile}
               </span>
@@ -262,6 +292,12 @@ export default function App() {
           <div className="max-w-7xl w-full mx-auto">
             {effectiveTab === 'dashboard' && (
               <DashboardView token={token} user={user} locale={locale} />
+            )}
+            {effectiveTab === 'scraper' && (
+              <ScraperView token={token} />
+            )}
+            {effectiveTab === 'wordpress' && (
+              <WordPressSitesView token={token} />
             )}
             {effectiveTab === 'users' && isAdmin && (
               <UsersManagementView token={token} currentUser={user} locale={locale} />

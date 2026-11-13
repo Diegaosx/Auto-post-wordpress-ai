@@ -9,6 +9,10 @@ import {
   AuditLog,
   DailyMetricPoint,
   DashboardSummary,
+  WordPressSite,
+  WordPressLog,
+  NewsSource,
+  CapturedArticle,
 } from '../../shared/types';
 import { hashPassword, verifyPassword, hashToken } from '../security/crypto-shield';
 
@@ -31,6 +35,10 @@ interface DatabaseSchemaState {
   passwordResets: PasswordResetRecord[];
   auditLogs: AuditLog[];
   metricsDaily: DailyMetricPoint[];
+  wpSites: WordPressSite[];
+  wpLogs: WordPressLog[];
+  newsSources: NewsSource[];
+  capturedArticles: CapturedArticle[];
 }
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
@@ -199,11 +207,136 @@ function createInitialSeed(): DatabaseSchemaState {
     },
   ];
 
+  const wpSites: WordPressSite[] = [
+    {
+      id: 'site_wp_01',
+      userId: 'usr_admin_01',
+      siteName: 'Portal Tech & News Brasil',
+      siteUrl: 'https://exemplo-portal-noticias.com.br',
+      apiKey: 'wp_live_78a1bc294ef03',
+      status: 'connected',
+      lastSyncAt: new Date(now.getTime() - 25 * 60000).toISOString(),
+      autoPublish: true,
+      defaultStatus: 'publish',
+      defaultCategory: 'Tecnologia',
+      createdAt: new Date(now.getTime() - 10 * 86400000).toISOString(),
+      updatedAt: nowIso,
+    },
+  ];
+
+  const wpLogs: WordPressLog[] = [
+    {
+      id: 'wplog_01',
+      siteId: 'site_wp_01',
+      siteName: 'Portal Tech & News Brasil',
+      action: 'POST_PUBLISHED',
+      status: 'success',
+      message: 'Artigo "Como a Inteligência Artificial Transforma o Mercado em 2026" publicado com sucesso (ID: 1042)',
+      details: { wpPostId: 1042, status: 'publish' },
+      timestamp: new Date(now.getTime() - 25 * 60000).toISOString(),
+    },
+  ];
+
+  const newsSources: NewsSource[] = [
+    {
+      id: 'src_g1_tec',
+      userId: 'usr_admin_01',
+      name: 'G1 — Tecnologia e Games',
+      url: 'https://g1.globo.com/rss/g1/tecnologia/',
+      type: 'rss',
+      category: 'Tecnologia',
+      targetSiteId: 'site_wp_01',
+      active: true,
+      autoRewrite: true,
+      autoPublish: false,
+      lastScrapedAt: new Date(now.getTime() - 15 * 60000).toISOString(),
+      articlesCount: 12,
+      createdAt: new Date(now.getTime() - 7 * 86400000).toISOString(),
+    },
+    {
+      id: 'src_cnn_br',
+      userId: 'usr_admin_01',
+      name: 'CNN Brasil — Economia & Negócios',
+      url: 'https://www.cnnbrasil.com.br/feed/',
+      type: 'rss',
+      category: 'Economia',
+      targetSiteId: 'site_wp_01',
+      active: true,
+      autoRewrite: true,
+      autoPublish: false,
+      lastScrapedAt: new Date(now.getTime() - 35 * 60000).toISOString(),
+      articlesCount: 8,
+      createdAt: new Date(now.getTime() - 5 * 86400000).toISOString(),
+    },
+    {
+      id: 'src_techcrunch',
+      userId: 'usr_admin_01',
+      name: 'TechCrunch — Global Tech & Startups',
+      url: 'https://techcrunch.com/feed/',
+      type: 'rss',
+      category: 'Startups & IA',
+      targetSiteId: 'site_wp_01',
+      active: true,
+      autoRewrite: false,
+      autoPublish: false,
+      lastScrapedAt: new Date(now.getTime() - 60 * 60000).toISOString(),
+      articlesCount: 15,
+      createdAt: new Date(now.getTime() - 3 * 86400000).toISOString(),
+    },
+  ];
+
+  const capturedArticles: CapturedArticle[] = [
+    {
+      id: 'art_demo_01',
+      sourceId: 'src_g1_tec',
+      sourceName: 'G1 — Tecnologia e Games',
+      originalUrl: 'https://g1.globo.com/tecnologia/noticia/2026/11/13/avancos-em-modelos-de-inteligencia-artificial.ghtml',
+      originalTitle: 'Novos modelos de Inteligência Artificial impulsionam automação empresarial em ritmo acelerado',
+      originalContent: '<p>Adoção de sistemas autônomos de IA bate recorde em diversos setores industriais e de tecnologia...</p>',
+      originalExcerpt: 'Empresas aceleram a integração de agentes inteligentes com ganhos de eficiência operacional.',
+      imageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&q=80',
+      publishedAt: new Date(now.getTime() - 50 * 60000).toISOString(),
+      status: 'ready',
+      aiTitle: 'Como a Inteligência Artificial Autônoma Revoluciona a Produtividade Corporativa',
+      aiContent: '<h2>A Revolução dos Agentes de IA nas Organizações</h2><p>A transição para ecossistemas orientados a IA permite que tarefas rotineiras e fluxos complexos de trabalho sejam automatizados com segurança e rastreabilidade total.</p><h3>Vantagens Competitivas e Tendências</h3><ul><li>Processamento contínuo em tempo real</li><li>Redução drástica de tempo de resposta</li><li>Integração nativa com APIs e sistemas de gestão</li></ul><p>O mercado brasileiro tem se destacado pela rápida adoção dessa tecnologia nos últimos anos.</p>',
+      aiExcerpt: 'Entenda os principais impactos da IA autônoma e como as empresas estão conquistando vantagem competitiva.',
+      aiSeoKeywords: ['inteligencia artificial', 'automacao empresarial', 'tecnologia 2026', 'inovacao'],
+      wpPostId: 1042,
+      wpSiteId: 'site_wp_01',
+      wpPermalink: 'https://exemplo-portal-noticias.com.br/ia-produtividade-corporativa',
+      createdAt: new Date(now.getTime() - 40 * 60000).toISOString(),
+    },
+    {
+      id: 'art_demo_02',
+      sourceId: 'src_cnn_br',
+      sourceName: 'CNN Brasil — Economia & Negócios',
+      originalUrl: 'https://www.cnnbrasil.com.br/economia/mercado-financeiro-e-inovacao-tecnologica/',
+      originalTitle: 'Setor de tecnologia atrai investimentos bilionários em inovação no quarto trimestre',
+      originalContent: '<p>Rodadas de investimentos focadas em inteligência artificial e plataformas em nuvem mantêm ritmo aquecido...</p>',
+      originalExcerpt: 'Fundos globais direcionam capital para startups com foco em automação e infraestrutura.',
+      imageUrl: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=1200&q=80',
+      publishedAt: new Date(now.getTime() - 70 * 60000).toISOString(),
+      status: 'pending',
+      aiTitle: null,
+      aiContent: null,
+      aiExcerpt: null,
+      aiSeoKeywords: [],
+      wpPostId: null,
+      wpSiteId: null,
+      wpPermalink: null,
+      createdAt: new Date(now.getTime() - 65 * 60000).toISOString(),
+    },
+  ];
+
   return {
     users: initialUsers,
     passwordResets: [],
     auditLogs,
     metricsDaily,
+    wpSites,
+    wpLogs,
+    newsSources,
+    capturedArticles,
   };
 }
 
@@ -223,6 +356,10 @@ class PostgresRepository {
         const raw = fs.readFileSync(DB_FILE, 'utf8');
         const parsed = JSON.parse(raw) as DatabaseSchemaState;
         if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0) {
+          if (!Array.isArray(parsed.wpSites)) parsed.wpSites = [];
+          if (!Array.isArray(parsed.wpLogs)) parsed.wpLogs = [];
+          if (!Array.isArray(parsed.newsSources)) parsed.newsSources = [];
+          if (!Array.isArray(parsed.capturedArticles)) parsed.capturedArticles = [];
           return parsed;
         }
       }
@@ -481,6 +618,222 @@ class PostgresRepository {
       },
       series,
     };
+  }
+
+  // ==========================================================================
+  // WORDPRESS SITES & LICENSES
+  // ==========================================================================
+  public getWordPressSites(userId?: string): WordPressSite[] {
+    if (!this.state.wpSites) this.state.wpSites = [];
+    if (!userId) return [...this.state.wpSites];
+    return this.state.wpSites.filter((s) => s.userId === userId);
+  }
+
+  public getWordPressSiteById(id: string): WordPressSite | null {
+    if (!this.state.wpSites) this.state.wpSites = [];
+    return this.state.wpSites.find((s) => s.id === id) || null;
+  }
+
+  public getWordPressSiteByApiKey(apiKey: string): WordPressSite | null {
+    if (!this.state.wpSites) this.state.wpSites = [];
+    return this.state.wpSites.find((s) => s.apiKey === apiKey.trim()) || null;
+  }
+
+  public createWordPressSite(data: Omit<WordPressSite, 'id' | 'createdAt' | 'updatedAt'>): WordPressSite {
+    if (!this.state.wpSites) this.state.wpSites = [];
+    const now = new Date().toISOString();
+    const site: WordPressSite = {
+      ...data,
+      id: `site_wp_${crypto.randomBytes(6).toString('hex')}`,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.state.wpSites.unshift(site);
+    this.persist();
+    return site;
+  }
+
+  public updateWordPressSite(id: string, updates: Partial<WordPressSite>): WordPressSite | null {
+    if (!this.state.wpSites) this.state.wpSites = [];
+    const idx = this.state.wpSites.findIndex((s) => s.id === id);
+    if (idx === -1) return null;
+    const updated: WordPressSite = {
+      ...this.state.wpSites[idx],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.wpSites[idx] = updated;
+    this.persist();
+    return updated;
+  }
+
+  public deleteWordPressSite(id: string): boolean {
+    if (!this.state.wpSites) this.state.wpSites = [];
+    const len = this.state.wpSites.length;
+    this.state.wpSites = this.state.wpSites.filter((s) => s.id !== id);
+    if (this.state.wpSites.length !== len) {
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  public appendWordPressLog(log: Omit<WordPressLog, 'id' | 'timestamp'>): WordPressLog {
+    if (!this.state.wpLogs) this.state.wpLogs = [];
+    const newLog: WordPressLog = {
+      ...log,
+      id: `wplog_${crypto.randomBytes(6).toString('hex')}`,
+      timestamp: new Date().toISOString(),
+    };
+    this.state.wpLogs.unshift(newLog);
+    if (this.state.wpLogs.length > 500) {
+      this.state.wpLogs = this.state.wpLogs.slice(0, 500);
+    }
+    this.persist();
+    return newLog;
+  }
+
+  public getWordPressLogs(siteId?: string, limit = 50): WordPressLog[] {
+    if (!this.state.wpLogs) this.state.wpLogs = [];
+    let list = this.state.wpLogs;
+    if (siteId) {
+      list = list.filter((l) => l.siteId === siteId);
+    }
+    return list.slice(0, limit);
+  }
+
+  // ==========================================================================
+  // NEWS SOURCES
+  // ==========================================================================
+  public getNewsSources(userId?: string): NewsSource[] {
+    if (!this.state.newsSources) this.state.newsSources = [];
+    if (!userId) return [...this.state.newsSources];
+    return this.state.newsSources.filter((s) => s.userId === userId);
+  }
+
+  public getNewsSourceById(id: string): NewsSource | null {
+    if (!this.state.newsSources) this.state.newsSources = [];
+    return this.state.newsSources.find((s) => s.id === id) || null;
+  }
+
+  public createNewsSource(data: Omit<NewsSource, 'id' | 'createdAt'>): NewsSource {
+    if (!this.state.newsSources) this.state.newsSources = [];
+    const now = new Date().toISOString();
+    const source: NewsSource = {
+      ...data,
+      id: `src_${crypto.randomBytes(6).toString('hex')}`,
+      createdAt: now,
+    };
+    this.state.newsSources.unshift(source);
+    this.persist();
+    return source;
+  }
+
+  public updateNewsSource(id: string, updates: Partial<NewsSource>): NewsSource | null {
+    if (!this.state.newsSources) this.state.newsSources = [];
+    const idx = this.state.newsSources.findIndex((s) => s.id === id);
+    if (idx === -1) return null;
+    const updated: NewsSource = {
+      ...this.state.newsSources[idx],
+      ...updates,
+    };
+    this.state.newsSources[idx] = updated;
+    this.persist();
+    return updated;
+  }
+
+  public deleteNewsSource(id: string): boolean {
+    if (!this.state.newsSources) this.state.newsSources = [];
+    const len = this.state.newsSources.length;
+    this.state.newsSources = this.state.newsSources.filter((s) => s.id !== id);
+    if (this.state.newsSources.length !== len) {
+      this.persist();
+      return true;
+    }
+    return false;
+  }
+
+  // ==========================================================================
+  // CAPTURED ARTICLES
+  // ==========================================================================
+  public getCapturedArticles(params?: {
+    sourceId?: string;
+    status?: string;
+    search?: string;
+    limit?: number;
+  }): CapturedArticle[] {
+    if (!this.state.capturedArticles) this.state.capturedArticles = [];
+    let list = [...this.state.capturedArticles];
+    if (params?.sourceId) {
+      list = list.filter((a) => a.sourceId === params.sourceId);
+    }
+    if (params?.status && params.status !== 'all') {
+      list = list.filter((a) => a.status === params.status);
+    }
+    if (params?.search) {
+      const q = params.search.toLowerCase();
+      list = list.filter(
+        (a) =>
+          a.originalTitle.toLowerCase().includes(q) ||
+          (a.aiTitle && a.aiTitle.toLowerCase().includes(q)) ||
+          a.sourceName.toLowerCase().includes(q)
+      );
+    }
+    return list.slice(0, params?.limit ?? 100);
+  }
+
+  public getCapturedArticleById(id: string): CapturedArticle | null {
+    if (!this.state.capturedArticles) this.state.capturedArticles = [];
+    return this.state.capturedArticles.find((a) => a.id === id) || null;
+  }
+
+  public checkArticleUrlExists(url: string): boolean {
+    if (!this.state.capturedArticles) this.state.capturedArticles = [];
+    const cleanUrl = url.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+    return this.state.capturedArticles.some((a) => {
+      const existing = a.originalUrl.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+      return existing === cleanUrl;
+    });
+  }
+
+  public createCapturedArticle(data: Omit<CapturedArticle, 'id' | 'createdAt'>): CapturedArticle {
+    if (!this.state.capturedArticles) this.state.capturedArticles = [];
+    const now = new Date().toISOString();
+    const article: CapturedArticle = {
+      ...data,
+      id: `art_${crypto.randomBytes(6).toString('hex')}`,
+      createdAt: now,
+    };
+    this.state.capturedArticles.unshift(article);
+    if (this.state.capturedArticles.length > 500) {
+      this.state.capturedArticles = this.state.capturedArticles.slice(0, 500);
+    }
+    this.persist();
+    return article;
+  }
+
+  public updateCapturedArticle(id: string, updates: Partial<CapturedArticle>): CapturedArticle | null {
+    if (!this.state.capturedArticles) this.state.capturedArticles = [];
+    const idx = this.state.capturedArticles.findIndex((a) => a.id === id);
+    if (idx === -1) return null;
+    const updated: CapturedArticle = {
+      ...this.state.capturedArticles[idx],
+      ...updates,
+    };
+    this.state.capturedArticles[idx] = updated;
+    this.persist();
+    return updated;
+  }
+
+  public deleteCapturedArticle(id: string): boolean {
+    if (!this.state.capturedArticles) this.state.capturedArticles = [];
+    const len = this.state.capturedArticles.length;
+    this.state.capturedArticles = this.state.capturedArticles.filter((a) => a.id !== id);
+    if (this.state.capturedArticles.length !== len) {
+      this.persist();
+      return true;
+    }
+    return false;
   }
 }
 
