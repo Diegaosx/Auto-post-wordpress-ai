@@ -431,5 +431,9 @@
       "loginsCount": 64,
       "actionsCount": 217
     }
-  ]
+  ],
+  "wpSites": [],
+  "wpLogs": [],
+  "newsSources": [],
+  "capturedArticles": []
 }

@@ -33,7 +33,8 @@ export const env = {
   MAX_UPLOAD_SIZE_BYTES: parseNumber(process.env.MAX_UPLOAD_SIZE_BYTES, 5 * 1024 * 1024),
 
   // PostgreSQL Standard Configuration
-  POSTGRES_ENABLED: parseBoolean(process.env.POSTGRES_ENABLED, false),
+  DATABASE_URL: process.env.DATABASE_URL || '',
+  POSTGRES_ENABLED: parseBoolean(process.env.POSTGRES_ENABLED, Boolean(process.env.DATABASE_URL)),
   POSTGRES_HOST: process.env.POSTGRES_HOST || 'localhost',
   POSTGRES_PORT: parseNumber(process.env.POSTGRES_PORT, 5432),
   POSTGRES_USER: process.env.POSTGRES_USER || 'postgres',

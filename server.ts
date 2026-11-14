@@ -51,6 +51,8 @@ function getClientIp(req: Request): string {
 }
 
 async function startServer() {
+  await dbRepo.init();
+
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 

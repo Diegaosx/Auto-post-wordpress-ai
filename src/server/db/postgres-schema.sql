@@ -1,13 +1,13 @@
 -- ============================================================================
--- KORE BASE PLATFORM — CANONICAL POSTGRESQL SCHEMA
--- Default Relational Database Engine: PostgreSQL 16+
+-- AUTO POST WORDPRESS AI — CANONICAL POSTGRESQL SCHEMA
+-- PostgreSQL 16+ / 18+ Relational Persistence Engine
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 1. USERS TABLE (RBAC: 'admin' | 'client')
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(160) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
@@ -25,8 +25,8 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);
 
 -- 2. PASSWORD RESETS TABLE (SHA-256 Token Digest Only)
 CREATE TABLE IF NOT EXISTS password_resets (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   email VARCHAR(255) NOT NULL,
   token_hash VARCHAR(64) NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
@@ -38,9 +38,9 @@ CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets (to
 
 -- 3. AUDIT LOGS TABLE (Immutable System Trail)
 CREATE TABLE IF NOT EXISTS audit_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id VARCHAR(64) PRIMARY KEY,
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  actor_id VARCHAR(64),
   actor_email VARCHAR(255) NOT NULL,
   actor_role VARCHAR(32) NOT NULL,
   action VARCHAR(120) NOT NULL,
@@ -59,8 +59,89 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_actor_email ON audit_logs (actor_email
 -- 4. DAILY TELEMETRY METRICS TABLE (Dashboard Time-Series)
 CREATE TABLE IF NOT EXISTS metrics_daily (
   metric_date DATE PRIMARY KEY,
+  label VARCHAR(20),
   users_count INTEGER NOT NULL DEFAULT 0,
   logins_count INTEGER NOT NULL DEFAULT 0,
   actions_count INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 5. WORDPRESS SITES TABLE
+CREATE TABLE IF NOT EXISTS wordpress_sites (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  site_name VARCHAR(255) NOT NULL,
+  site_url TEXT NOT NULL,
+  api_key VARCHAR(255) NOT NULL UNIQUE,
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  last_sync_at TIMESTAMPTZ,
+  auto_publish BOOLEAN NOT NULL DEFAULT false,
+  default_status VARCHAR(32) NOT NULL DEFAULT 'publish',
+  default_category VARCHAR(120),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wp_sites_user_id ON wordpress_sites (user_id);
+CREATE INDEX IF NOT EXISTS idx_wp_sites_api_key ON wordpress_sites (api_key);
+
+-- 6. WORDPRESS SYNC LOGS TABLE
+CREATE TABLE IF NOT EXISTS wordpress_logs (
+  id VARCHAR(64) PRIMARY KEY,
+  site_id VARCHAR(64) NOT NULL,
+  site_name VARCHAR(255),
+  action VARCHAR(120) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  message TEXT,
+  details JSONB DEFAULT '{}'::jsonb,
+  timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wp_logs_site_id ON wordpress_logs (site_id);
+CREATE INDEX IF NOT EXISTS idx_wp_logs_timestamp ON wordpress_logs (timestamp DESC);
+
+-- 7. NEWS SOURCES TABLE (Scraper Feeds)
+CREATE TABLE IF NOT EXISTS news_sources (
+  id VARCHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  url TEXT NOT NULL,
+  type VARCHAR(32) NOT NULL DEFAULT 'rss',
+  category VARCHAR(120) NOT NULL,
+  target_site_id VARCHAR(64),
+  active BOOLEAN NOT NULL DEFAULT true,
+  auto_rewrite BOOLEAN NOT NULL DEFAULT false,
+  auto_publish BOOLEAN NOT NULL DEFAULT false,
+  last_scraped_at TIMESTAMPTZ,
+  articles_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_sources_user_id ON news_sources (user_id);
+
+-- 8. CAPTURED ARTICLES TABLE
+CREATE TABLE IF NOT EXISTS captured_articles (
+  id VARCHAR(64) PRIMARY KEY,
+  source_id VARCHAR(64) NOT NULL,
+  source_name VARCHAR(255) NOT NULL,
+  original_url TEXT NOT NULL UNIQUE,
+  original_title TEXT NOT NULL,
+  original_content TEXT NOT NULL,
+  original_excerpt TEXT,
+  image_url TEXT,
+  published_at TIMESTAMPTZ,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  ai_title TEXT,
+  ai_content TEXT,
+  ai_excerpt TEXT,
+  ai_seo_keywords JSONB DEFAULT '[]'::jsonb,
+  wp_post_id INTEGER,
+  wp_site_id VARCHAR(64),
+  wp_permalink TEXT,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_captured_articles_source_id ON captured_articles (source_id);
+CREATE INDEX IF NOT EXISTS idx_captured_articles_status ON captured_articles (status);
+CREATE INDEX IF NOT EXISTS idx_captured_articles_created_at ON captured_articles (created_at DESC);
