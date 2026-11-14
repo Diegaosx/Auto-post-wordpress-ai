@@ -1,10 +1,14 @@
 import Parser from 'rss-parser';
+import * as cheerio from 'cheerio';
 import { dbRepo } from '../db/repository';
 import { executeLlmPrompt } from './llm-gateway';
 import { CapturedArticle, NewsSource, ArticleRewriteOptions } from '../../shared/types';
 import { syncArticleToWordPress } from './wordpress-sync';
 import { extractArticle } from './article-extractor';
 import { uploadArticleJson, uploadFeedJson } from './r2-sync';
+
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const rssParser = new Parser({
   customFields: {
@@ -15,7 +19,7 @@ const rssParser = new Parser({
     ],
   },
   headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AutoPostAi/1.0',
+    'User-Agent': DEFAULT_USER_AGENT,
     'Accept': 'application/rss+xml, application/xml, text/xml, */*',
   },
   timeout: 15000,
@@ -32,6 +36,153 @@ function cleanHtmlTags(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Resolução resiliente de matérias de uma fonte:
+ * 1. Parse de RSS/Atom direto
+ * 2. Descoberta inteligente de RSS no DOM (<link rel="alternate" type="application/rss+xml">)
+ * 3. Procura de endpoints de feed convencionais (/feed/, /rss/, etc.)
+ * 4. Extração DOM direta via Cheerio diretamente no portal/categoria se não houver feed RSS
+ */
+async function fetchSourceItems(sourceUrl: string, sourceName: string): Promise<Array<{
+  title?: string;
+  link?: string;
+  content?: string;
+  contentSnippet?: string;
+  pubDate?: string;
+  enclosure?: { url?: string };
+  mediaContent?: { $?: { url?: string } };
+  mediaThumbnail?: { $?: { url?: string } };
+}>> {
+  // 1. Tentar parse direto de RSS/Atom
+  try {
+    const feed = await rssParser.parseURL(sourceUrl);
+    if (feed && feed.items && feed.items.length > 0) {
+      return feed.items as any;
+    }
+  } catch (feedError: any) {
+    console.log(`[Scraper] Fonte "${sourceName}" (${sourceUrl}) não é feed XML direto. Iniciando detecção inteligente...`);
+  }
+
+  // 2. Requisição HTTP com cabeçalhos padrão de navegador para evitar bloqueios WAF/Cloudflare
+  let htmlText = '';
+  try {
+    const response = await fetch(sourceUrl, {
+      headers: {
+        'User-Agent': DEFAULT_USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15000),
+    });
+    htmlText = await response.text();
+  } catch (err: any) {
+    throw new Error(`Falha ao conectar com o portal "${sourceName}": ${err.message}`);
+  }
+
+  const $ = cheerio.load(htmlText);
+
+  // 3. Procura tags <link> de RSS/Atom no DOM da página
+  let discoveredFeedUrl =
+    $('link[type="application/rss+xml"]').not('[href*="comments"]').first().attr('href') ||
+    $('link[type="application/atom+xml"]').not('[href*="comments"]').first().attr('href') ||
+    $('link[type*="rss"]').not('[href*="comments"]').first().attr('href') ||
+    $('link[type*="atom"]').not('[href*="comments"]').first().attr('href') ||
+    $('link[rel="alternate"][href*="feed"]').not('[href*="comments"]').first().attr('href') ||
+    $('link[rel="alternate"][href*="rss"]').not('[href*="comments"]').first().attr('href');
+
+  if (discoveredFeedUrl) {
+    let resolvedFeedUrl = discoveredFeedUrl;
+    if (!resolvedFeedUrl.startsWith('http')) {
+      const base = new URL(sourceUrl);
+      resolvedFeedUrl = new URL(resolvedFeedUrl, base.origin).toString();
+    }
+    try {
+      const resolvedFeed = await rssParser.parseURL(resolvedFeedUrl);
+      if (resolvedFeed && resolvedFeed.items && resolvedFeed.items.length > 0) {
+        console.log(`[Scraper] Feed RSS detectado no HTML para "${sourceName}": ${resolvedFeedUrl} (${resolvedFeed.items.length} itens)`);
+        return resolvedFeed.items as any;
+      }
+    } catch {
+      // continua para endpoints comuns
+    }
+  }
+
+  // 4. Procura endpoints de feed convencionais (/feed/, /rss/, etc.)
+  try {
+    const parsed = new URL(sourceUrl);
+    const candidates = [
+      new URL('/feed/', parsed.origin).toString(),
+      new URL('/rss/', parsed.origin).toString(),
+      new URL('/feed', parsed.origin).toString(),
+      new URL('/rss.xml', parsed.origin).toString(),
+    ];
+
+    if (parsed.pathname && parsed.pathname.length > 1) {
+      const cleanPath = sourceUrl.replace(/\/+$/, '');
+      candidates.unshift(`${cleanPath}/feed/`, `${cleanPath}/feed`, `${cleanPath}/rss/`);
+    }
+
+    for (const cand of candidates) {
+      try {
+        const probedFeed = await rssParser.parseURL(cand);
+        if (probedFeed && probedFeed.items && probedFeed.items.length > 0) {
+          console.log(`[Scraper] Endpoint de feed encontrado para "${sourceName}": ${cand} (${probedFeed.items.length} itens)`);
+          return probedFeed.items as any;
+        }
+      } catch {
+        // continua tentando outros candidatos
+      }
+    }
+  } catch {
+    // ignora erros de url
+  }
+
+  // 5. Fallback Universal: Extração DOM direta da página inicial ou categoria do portal
+  console.log(`[Scraper] Ativando extração DOM direta de matérias na página da fonte "${sourceName}"...`);
+  const domArticles: Array<{ title: string; link: string; pubDate: string }> = [];
+  const parsedHost = new URL(sourceUrl);
+
+  $('article a, main a, [class*="noticia"] a, [class*="materia"] a, [class*="manchete"] a, [class*="destaque"] a, [class*="card"] a, h1 a, h2 a, h3 a').each((_, el) => {
+    let href = $(el).attr('href');
+    const title = $(el).text().trim();
+    if (!href || !title || title.length < 15) return;
+
+    if (!href.startsWith('http')) {
+      href = new URL(href, sourceUrl).toString();
+    }
+    const clean = href.split('?')[0].split('#')[0];
+    if (
+      clean.includes(parsedHost.hostname) &&
+      !clean.endsWith('.jpg') &&
+      !clean.endsWith('.png') &&
+      !clean.endsWith('.webp') &&
+      !clean.includes('/tag/') &&
+      !clean.includes('/categoria/') &&
+      !clean.includes('/author/') &&
+      !clean.includes('/sobre/') &&
+      !clean.includes('/contato/') &&
+      clean !== sourceUrl.replace(/\/+$/, '') &&
+      clean !== parsedHost.origin
+    ) {
+      if (!domArticles.find((a) => a.link === clean)) {
+        domArticles.push({
+          title,
+          link: clean,
+          pubDate: new Date().toISOString(),
+        });
+      }
+    }
+  });
+
+  if (domArticles.length > 0) {
+    console.log(`[Scraper] Extração DOM direta identificou ${domArticles.length} notícias no portal "${sourceName}".`);
+    return domArticles as any;
+  }
+
+  throw new Error(`Nenhum feed RSS ou matéria identificável no portal "${sourceName}" (${sourceUrl}).`);
+}
+
 export async function scrapeSource(sourceId: string): Promise<{
   source: NewsSource;
   totalFound: number;
@@ -43,47 +194,7 @@ export async function scrapeSource(sourceId: string): Promise<{
     throw new Error(`Fonte com ID ${sourceId} não foi encontrada.`);
   }
 
-  let items: Array<{
-    title?: string;
-    link?: string;
-    content?: string;
-    contentSnippet?: string;
-    pubDate?: string;
-    enclosure?: { url?: string };
-    mediaContent?: { $?: { url?: string } };
-    mediaThumbnail?: { $?: { url?: string } };
-  }> = [];
-
-  try {
-    const feed = await rssParser.parseURL(source.url);
-    items = (feed.items || []) as typeof items;
-  } catch (feedError) {
-    // Se não for RSS puro ou falhar, tenta requisição HTTP direta buscando feeds alternativos ou HTML
-    console.warn(`[Scraper] Falha ao fazer parse de RSS direto para ${source.url}. Tentando extração HTTP fallback...`, feedError);
-    
-    try {
-      const response = await fetch(source.url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AutoPostAi/1.0' },
-      });
-      const htmlText = await response.text();
-
-      // Procura tag <link rel="alternate" type="application/rss+xml" href="...">
-      const rssMatch = htmlText.match(/<link[^>]+type=["']application\/rss\+xml["'][^>]+href=["']([^"']+)["']/i);
-      if (rssMatch && rssMatch[1]) {
-        let feedUrl = rssMatch[1];
-        if (!feedUrl.startsWith('http')) {
-          const base = new URL(source.url);
-          feedUrl = new URL(feedUrl, base.origin).toString();
-        }
-        const resolvedFeed = await rssParser.parseURL(feedUrl);
-        items = (resolvedFeed.items || []) as typeof items;
-      } else {
-        throw new Error(`Nenhum feed RSS detectado no portal ${source.url}. Certifique-se de usar a URL de feed RSS da categoria.`);
-      }
-    } catch (err: any) {
-      throw new Error(`Erro ao conectar com a fonte "${source.name}": ${err.message}`);
-    }
-  }
+  const items = await fetchSourceItems(source.url, source.name);
 
   const capturedList: CapturedArticle[] = [];
   let newCount = 0;
