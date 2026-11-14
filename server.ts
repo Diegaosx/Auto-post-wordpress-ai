@@ -397,6 +397,16 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Public Healthcheck for Docker / Load Balancers
+  app.get('/api/health', (_req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      version: '1.0.0',
+    });
+  });
+
   app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const user = dbRepo.findUserById(req.auth!.sub);
     if (!user) {
