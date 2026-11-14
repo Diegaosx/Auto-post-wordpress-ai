@@ -171,6 +171,19 @@ CREATE INDEX IF NOT EXISTS idx_captured_articles_source_id ON captured_articles 
 CREATE INDEX IF NOT EXISTS idx_captured_articles_status ON captured_articles (status);
 CREATE INDEX IF NOT EXISTS idx_captured_articles_created_at ON captured_articles (created_at DESC);
 
+-- 8.1 PUBLICAÇÕES DE ARTIGOS POR SITE (ESCUDO ANTI-DUPLICAÇÃO)
+CREATE TABLE IF NOT EXISTS article_publications (
+  id SERIAL PRIMARY KEY,
+  article_id VARCHAR(64) NOT NULL,
+  site_id VARCHAR(64) NOT NULL,
+  wp_post_id INTEGER,
+  permalink TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_article_site UNIQUE (article_id, site_id)
+);
+CREATE INDEX IF NOT EXISTS idx_art_pub_article_id ON article_publications (article_id);
+CREATE INDEX IF NOT EXISTS idx_art_pub_site_id ON article_publications (site_id);
+
 -- 9. SOURCES & CAPTURED ITEMS (Daemon Painel AGY & VPS Compatibility)
 CREATE TABLE IF NOT EXISTS sources (
   id VARCHAR(64) PRIMARY KEY,

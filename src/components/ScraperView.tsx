@@ -23,6 +23,7 @@ import {
   Pencil,
   ChevronLeft,
   ChevronRight,
+  Shield,
 } from 'lucide-react';
 
 interface ScraperViewProps {
@@ -217,7 +218,9 @@ export function ScraperView({ token }: ScraperViewProps) {
       if (data.success) {
         setActionMessage({
           type: 'success',
-          text: `Artigo publicado com sucesso no WordPress! ID: ${data.wpPostId}`,
+          text: data.alreadyPublished
+            ? (data.message || 'Artigo já publicado anteriormente neste site. Duplicação evitada.')
+            : `Artigo publicado com sucesso no WordPress! ID: ${data.wpPostId}`,
         });
         setPublishModalArticle(null);
         fetchData();
@@ -1216,12 +1219,24 @@ export function ScraperView({ token }: ScraperViewProps) {
                   onChange={(e) => setSelectedPublishSiteId(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
                 >
-                  {sites.map((site) => (
-                    <option key={site.id} value={site.id}>
-                      {site.siteName} ({site.siteUrl})
-                    </option>
-                  ))}
+                  {sites.map((site) => {
+                    const isAlready = publishModalArticle.publishedSiteIds?.includes(site.id) || publishModalArticle.wpSiteId === site.id;
+                    return (
+                      <option key={site.id} value={site.id}>
+                        {site.siteName} ({site.siteUrl}) {isAlready ? '— [Já publicado]' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
+
+                {(publishModalArticle.publishedSiteIds?.includes(selectedPublishSiteId) || publishModalArticle.wpSiteId === selectedPublishSiteId) && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      <strong>Escudo Anti-Duplicação:</strong> Esta matéria já foi publicada anteriormente neste site. O sistema e o plugin evitarão criar posts repetidos.
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 space-y-1">

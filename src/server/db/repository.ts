@@ -119,6 +119,7 @@ class PostgresRepository {
   private state: DatabaseSchemaState;
   private pool: pg.Pool | null = null;
   private isPgConnected = false;
+  private articlePublications = new Map<string, { wpPostId?: number; permalink?: string; publishedAt: string }>();
 
   constructor() {
     this.state = this.loadOrInitialize();
@@ -303,6 +304,36 @@ class PostgresRepository {
       errorMessage: r.error_message,
       createdAt: new Date(r.created_at).toISOString(),
     }));
+
+    // Article Publications (Escudo Anti-Duplicação por Site)
+    try {
+      const pubsRes = await this.pool.query('SELECT * FROM article_publications');
+      this.articlePublications.clear();
+      for (const r of pubsRes.rows) {
+        this.articlePublications.set(`${r.article_id}:${r.site_id}`, {
+          wpPostId: r.wp_post_id ? Number(r.wp_post_id) : undefined,
+          permalink: r.permalink || undefined,
+          publishedAt: new Date(r.created_at).toISOString(),
+        });
+      }
+
+      // Preenche publishedSiteIds em cada artigo
+      for (const art of this.state.capturedArticles) {
+        const siteIds: string[] = [];
+        for (const [key] of this.articlePublications.entries()) {
+          const [artId, siteId] = key.split(':');
+          if (artId === art.id && !siteIds.includes(siteId)) {
+            siteIds.push(siteId);
+          }
+        }
+        if (art.wpSiteId && !siteIds.includes(art.wpSiteId)) {
+          siteIds.push(art.wpSiteId);
+        }
+        art.publishedSiteIds = siteIds;
+      }
+    } catch (pubErr: any) {
+      console.warn('[PostgreSQL] Tabela article_publications não carregada:', pubErr.message);
+    }
 
     // Audit Logs
     const logsRes = await this.pool.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 1000');
@@ -1232,6 +1263,81 @@ class PostgresRepository {
       return true;
     }
     return false;
+  }
+
+  // ==========================================================================
+  // ESCUDO ANTI-DUPLICAÇÃO DE PUBLICAÇÕES
+  // ==========================================================================
+  public isArticlePublishedToSite(articleId: string, siteId: string): boolean {
+    const key = `${articleId}:${siteId}`;
+    if (this.articlePublications.has(key)) return true;
+    const art = this.state.capturedArticles.find((a) => a.id === articleId);
+    if (art?.publishedSiteIds && art.publishedSiteIds.includes(siteId)) return true;
+    if (art?.wpSiteId === siteId) return true;
+    return false;
+  }
+
+  public getArticlePublication(articleId: string, siteId: string): { wpPostId?: number; permalink?: string; publishedAt: string } | null {
+    const key = `${articleId}:${siteId}`;
+    return this.articlePublications.get(key) || null;
+  }
+
+  public getPublishedSiteIdsForArticle(articleId: string): string[] {
+    const sites: string[] = [];
+    for (const [key] of this.articlePublications.entries()) {
+      const [artId, sId] = key.split(':');
+      if (artId === articleId && !sites.includes(sId)) {
+        sites.push(sId);
+      }
+    }
+    const art = this.state.capturedArticles.find((a) => a.id === articleId);
+    if (art?.publishedSiteIds) {
+      for (const s of art.publishedSiteIds) {
+        if (!sites.includes(s)) sites.push(s);
+      }
+    }
+    if (art?.wpSiteId && !sites.includes(art.wpSiteId)) {
+      sites.push(art.wpSiteId);
+    }
+    return sites;
+  }
+
+  public async recordArticlePublication(articleId: string, siteId: string, wpPostId?: number, permalink?: string): Promise<void> {
+    const key = `${articleId}:${siteId}`;
+    const nowIso = new Date().toISOString();
+    this.articlePublications.set(key, {
+      wpPostId,
+      permalink,
+      publishedAt: nowIso,
+    });
+
+    const art = this.state.capturedArticles.find((a) => a.id === articleId);
+    if (art) {
+      if (!art.publishedSiteIds) art.publishedSiteIds = [];
+      if (!art.publishedSiteIds.includes(siteId)) {
+        art.publishedSiteIds.push(siteId);
+      }
+      art.status = 'published';
+      if (wpPostId) art.wpPostId = wpPostId;
+      art.wpSiteId = siteId;
+      if (permalink) art.wpPermalink = permalink;
+      this.persist();
+    }
+
+    if (this.pool) {
+      try {
+        await this.pool.query(
+          `INSERT INTO article_publications (article_id, site_id, wp_post_id, permalink, created_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (article_id, site_id) DO UPDATE SET
+             wp_post_id = EXCLUDED.wp_post_id,
+             permalink = EXCLUDED.permalink`,
+          [articleId, siteId, wpPostId || null, permalink || null]
+        );
+      } catch (err: any) {
+        console.error('[PostgreSQL] Erro ao registrar em article_publications:', err.message);
+      }
+    }
   }
 
   // ==========================================================================

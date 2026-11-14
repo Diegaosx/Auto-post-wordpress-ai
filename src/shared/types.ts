@@ -214,6 +214,7 @@ export interface CapturedArticle {
   wpPostId: number | null;
   wpSiteId: string | null;
   wpPermalink: string | null;
+  publishedSiteIds?: string[];
   errorMessage?: string | null;
   createdAt: string;
 

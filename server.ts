@@ -1323,7 +1323,7 @@ async function startServer() {
 
   // Publish Article to WordPress Site
   app.post('/api/scraper/articles/:id/publish', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
-    const { siteId, status, category } = req.body || {};
+    const { siteId, status, category, force } = req.body || {};
 
     if (!siteId) {
       res.status(400).json({ error: 'ID do site WordPress é obrigatório.' });
@@ -1331,7 +1331,7 @@ async function startServer() {
     }
 
     try {
-      const result = await syncArticleToWordPress(req.params.id, siteId, { status, category });
+      const result = await syncArticleToWordPress(req.params.id, siteId, { status, category, force });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -1526,10 +1526,13 @@ async function startServer() {
             const allowedSources = site.sourceIds && site.sourceIds.length > 0 ? site.sourceIds : null;
             const articles = dbRepo.getCapturedArticles({ limit: 100 });
 
-            // Encontrar o artigo mais recente elegível que ainda não foi postado neste site
+            // Encontrar o artigo mais recente elegível que ainda não foi postado neste site (Escudo Anti-Duplicação)
             const candidate = articles.find((art) => {
               const matchesSource = !allowedSources || allowedSources.includes(art.sourceId);
-              const alreadyPosted = art.wpSiteId === site.id;
+              const alreadyPosted =
+                dbRepo.isArticlePublishedToSite(art.id, site.id) ||
+                (art.publishedSiteIds && art.publishedSiteIds.includes(site.id)) ||
+                art.wpSiteId === site.id;
               return matchesSource && !alreadyPosted;
             });
 

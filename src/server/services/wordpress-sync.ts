@@ -7,12 +7,14 @@ export async function syncArticleToWordPress(
   options?: {
     status?: 'publish' | 'draft';
     category?: string;
+    force?: boolean;
   }
 ): Promise<{
   success: boolean;
   wpPostId?: number;
   permalink?: string;
   message?: string;
+  alreadyPublished?: boolean;
 }> {
   const article = dbRepo.getCapturedArticleById(articleId);
   if (!article) {
@@ -22,6 +24,18 @@ export async function syncArticleToWordPress(
   const site = dbRepo.getWordPressSiteById(siteId);
   if (!site) {
     throw new Error(`Site WordPress com ID ${siteId} não encontrado.`);
+  }
+
+  // 1. Escudo Anti-Duplicação no Backend: Evita reenvio se já publicado neste site
+  if (!options?.force && dbRepo.isArticlePublishedToSite(articleId, siteId)) {
+    const existingPub = dbRepo.getArticlePublication(articleId, siteId);
+    return {
+      success: true,
+      alreadyPublished: true,
+      wpPostId: existingPub?.wpPostId || article.wpPostId || undefined,
+      permalink: existingPub?.permalink || article.wpPermalink || undefined,
+      message: `Artigo já publicado anteriormente no site "${site.siteName}". Duplicação evitada com sucesso.`,
+    };
   }
 
   let baseUrl = site.siteUrl.trim().replace(/\/$/, '');
@@ -62,6 +76,9 @@ export async function syncArticleToWordPress(
   const focusKeyword = article.aiSeoKeywords && article.aiSeoKeywords.length > 0 ? article.aiSeoKeywords[0] : 'notícias';
 
   const payload = {
+    article_id: article.id,
+    source_url: article.originalUrl,
+    original_url: article.originalUrl,
     title: postTitle,
     content: postContent,
     excerpt: postExcerpt,
@@ -79,7 +96,6 @@ export async function syncArticleToWordPress(
     keywords: article.aiSeoKeywords || [],
     seo_title: postTitle,
     seo_description: postExcerpt,
-    source_url: article.originalUrl,
   };
 
   // Tenta primeiro endpoint moderno do Auto Post AI, com fallback para criador-conteudo caso o WP use a base legada
@@ -133,6 +149,9 @@ export async function syncArticleToWordPress(
   const wpPostId = responseData.post_id || responseData.id;
   const permalink = responseData.permalink || responseData.link || `${baseUrl}/?p=${wpPostId}`;
 
+  // Registra no banco de dados para o Escudo Anti-Duplicação
+  await dbRepo.recordArticlePublication(article.id, site.id, wpPostId, permalink);
+
   // Atualiza artigo no banco
   dbRepo.updateCapturedArticle(article.id, {
     status: 'published',
@@ -147,21 +166,25 @@ export async function syncArticleToWordPress(
     lastSyncAt: new Date().toISOString(),
   });
 
+  const isDuplicatePrevented = Boolean(responseData.already_exists || responseData.duplicate_prevented);
+
   // Log de auditoria e log WordPress
   dbRepo.appendWordPressLog({
     siteId: site.id,
     siteName: site.siteName,
-    action: 'POST_PUBLISHED',
+    action: isDuplicatePrevented ? 'POST_DUPLICATE_PREVENTED' : 'POST_PUBLISHED',
     status: 'success',
-    message: `Artigo "${postTitle}" publicado com sucesso no site "${site.siteName}" (ID WP: ${wpPostId})`,
-    details: { wpPostId, permalink, status: postStatus },
+    message: isDuplicatePrevented
+      ? `Duplicação evitada: Artigo "${postTitle}" já constava no WordPress do site "${site.siteName}" (ID WP: ${wpPostId})`
+      : `Artigo "${postTitle}" publicado com sucesso no site "${site.siteName}" (ID WP: ${wpPostId})`,
+    details: { wpPostId, permalink, status: postStatus, duplicatePrevented: isDuplicatePrevented },
   });
 
   dbRepo.appendAuditLog({
     actorId: site.userId,
     actorEmail: 'system',
     actorRole: 'admin',
-    action: 'WP_ARTICLE_PUBLISHED',
+    action: isDuplicatePrevented ? 'WP_DUPLICATE_PREVENTED' : 'WP_ARTICLE_PUBLISHED',
     category: 'wordpress',
     resource: `${site.siteUrl}/posts/${wpPostId}`,
     status: 'success',
@@ -172,6 +195,7 @@ export async function syncArticleToWordPress(
       siteName: site.siteName,
       articleId: article.id,
       wpPostId,
+      duplicatePrevented: isDuplicatePrevented,
     },
   });
 
@@ -179,7 +203,10 @@ export async function syncArticleToWordPress(
     success: true,
     wpPostId,
     permalink,
-    message: 'Artigo publicado com sucesso!',
+    alreadyPublished: isDuplicatePrevented,
+    message: isDuplicatePrevented
+      ? 'Artigo já existia no WordPress. Duplicação evitada com sucesso.'
+      : 'Artigo publicado com sucesso!',
   };
 }
 

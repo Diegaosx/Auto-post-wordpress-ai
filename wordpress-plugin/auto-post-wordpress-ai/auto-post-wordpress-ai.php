@@ -3,7 +3,7 @@
  * Plugin Name: Auto Post WordPress AI
  * Plugin URI: https://github.com/Diegaosx/Auto-post-wordpress-ai
  * Description: Sincronização automatizada e publicação de artigos com Inteligência Artificial via REST API segura.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Auto Post AI Team
  * License: GPL v2 or later
  * Text Domain: auto-post-wordpress-ai
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('AUTO_POST_AI_VERSION', '1.1.0');
+define('AUTO_POST_AI_VERSION', '1.2.0');
 define('AUTO_POST_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AUTO_POST_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AUTO_POST_AI_DEFAULT_API_URL', '{{API_URL}}');
@@ -437,6 +437,49 @@ class AutoPostWordPressAI {
         return rest_ensure_response(array('success' => true, 'data' => $result));
     }
 
+    /**
+     * Localiza se um artigo já foi publicado anteriormente para prevenir duplicações.
+     * Verifica por ID do artigo no backend, URL original da fonte ou título idêntico.
+     */
+    private function find_existing_post($article_id, $source_url, $title) {
+        global $wpdb;
+
+        // 1. Busca por ID único do Artigo no meta _autopost_ai_article_id
+        if (!empty($article_id)) {
+            $post_id = $wpdb->get_var($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_autopost_ai_article_id' AND meta_value = %s LIMIT 1",
+                $article_id
+            ));
+            if ($post_id && get_post($post_id)) {
+                return (int) $post_id;
+            }
+        }
+
+        // 2. Busca por URL da Fonte original no meta _autopost_ai_source_url ou _autopost_source_url
+        if (!empty($source_url)) {
+            $post_id = $wpdb->get_var($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key IN ('_autopost_ai_source_url', '_autopost_source_url') AND meta_value = %s LIMIT 1",
+                $source_url
+            ));
+            if ($post_id && get_post($post_id)) {
+                return (int) $post_id;
+            }
+        }
+
+        // 3. Busca por Título Exato criado pelo AutoPost AI (excluindo posts excluídos/lixeira)
+        if (!empty($title)) {
+            $post_id = $wpdb->get_var($wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_title = %s AND post_type = 'post' AND post_status IN ('publish', 'draft', 'pending', 'future') LIMIT 1",
+                $title
+            ));
+            if ($post_id) {
+                return (int) $post_id;
+            }
+        }
+
+        return false;
+    }
+
     public function rest_create_post($request) {
         $body = $request->get_json_params();
 
@@ -448,9 +491,36 @@ class AutoPostWordPressAI {
         $tag_names = $body['tags'] ?? array();
         $image_url = esc_url_raw($body['image_url'] ?? $body['featured_image'] ?? '');
         $meta_data = $body['meta'] ?? array();
+        $article_id = sanitize_text_field($body['article_id'] ?? '');
+        $source_url = esc_url_raw($body['source_url'] ?? $body['original_url'] ?? '');
 
         if (empty($title) || empty($content)) {
             return new WP_Error('invalid_payload', 'Título e Conteúdo são campos obrigatórios.', array('status' => 400));
+        }
+
+        // Escudo Anti-Duplicação: Verifica se o post já existe neste WordPress
+        $existing_post_id = $this->find_existing_post($article_id, $source_url, $title);
+        if ($existing_post_id) {
+            // Garante que os metadados de rastreio existam no post já criado
+            if (!empty($article_id)) {
+                update_post_meta($existing_post_id, '_autopost_ai_article_id', $article_id);
+            }
+            if (!empty($source_url)) {
+                update_post_meta($existing_post_id, '_autopost_ai_source_url', $source_url);
+            }
+            update_post_meta($existing_post_id, '_autopost_ai_generated', '1');
+
+            return rest_ensure_response(array(
+                'success'             => true,
+                'already_exists'      => true,
+                'duplicate_prevented' => true,
+                'post_id'             => (int) $existing_post_id,
+                'status'              => get_post_status($existing_post_id),
+                'permalink'           => get_permalink($existing_post_id),
+                'featured_image_id'   => get_post_thumbnail_id($existing_post_id),
+                'featured_image_url'  => wp_get_attachment_url(get_post_thumbnail_id($existing_post_id)),
+                'message'             => 'Artigo já publicado anteriormente neste site WordPress. Duplicação evitada com sucesso.',
+            ));
         }
 
         // Mapear ou criar categorias
@@ -488,11 +558,14 @@ class AutoPostWordPressAI {
             return new WP_Error('post_insert_failed', $post_id->get_error_message(), array('status' => 500));
         }
 
-        // Salvar referência da origem
+        // Salvar referência da origem e ID único do artigo
         update_post_meta($post_id, '_autopost_ai_generated', '1');
         update_post_meta($post_id, '_autopost_ai_sync_date', current_time('mysql'));
-        if (!empty($body['source_url'])) {
-            update_post_meta($post_id, '_autopost_ai_source_url', esc_url_raw($body['source_url']));
+        if (!empty($article_id)) {
+            update_post_meta($post_id, '_autopost_ai_article_id', $article_id);
+        }
+        if (!empty($source_url)) {
+            update_post_meta($post_id, '_autopost_ai_source_url', $source_url);
         }
 
         // Metadados SEO Avançados (Yoast, RankMath, AIOSEO)
