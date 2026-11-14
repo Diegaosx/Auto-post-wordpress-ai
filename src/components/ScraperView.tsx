@@ -20,6 +20,7 @@ import {
   Tag,
   Calendar,
   Cloud,
+  Pencil,
 } from 'lucide-react';
 
 interface ScraperViewProps {
@@ -59,6 +60,63 @@ export function ScraperView({ token }: ScraperViewProps) {
   const [sourceTargetSite, setSourceTargetSite] = useState('');
   const [sourceIntervalMinutes, setSourceIntervalMinutes] = useState(15);
   const [submittingSource, setSubmittingSource] = useState(false);
+
+  // Edit Source Form
+  const [editingSource, setEditingSource] = useState<NewsSource | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editCategory, setEditCategory] = useState('Tecnologia');
+  const [editTargetSite, setEditTargetSite] = useState('');
+  const [editIntervalMinutes, setEditIntervalMinutes] = useState(15);
+  const [editActive, setEditActive] = useState(true);
+  const [submittingEditSource, setSubmittingEditSource] = useState(false);
+
+  const handleOpenEditSource = (src: NewsSource) => {
+    setEditingSource(src);
+    setEditName(src.name);
+    setEditUrl(src.url);
+    setEditCategory(src.category || 'Geral');
+    setEditTargetSite(src.targetSiteId || '');
+    setEditIntervalMinutes(src.intervalMinutes || 15);
+    setEditActive(src.active !== false);
+  };
+
+  const handleUpdateSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSource) return;
+    setSubmittingEditSource(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/scraper/sources/${editingSource.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: editName,
+          url: editUrl,
+          category: editCategory,
+          targetSiteId: editTargetSite || null,
+          intervalMinutes: Number(editIntervalMinutes) || 15,
+          active: editActive,
+        }),
+      });
+
+      if (res.ok) {
+        setEditingSource(null);
+        setActionMessage({ type: 'success', text: 'Fonte atualizada com sucesso!' });
+        fetchData();
+      } else {
+        const err = await res.json();
+        setActionMessage({ type: 'error', text: err.error || 'Erro ao atualizar fonte.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setSubmittingEditSource(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -444,16 +502,32 @@ export function ScraperView({ token }: ScraperViewProps) {
               >
                 <div>
                   <div className="flex items-start justify-between gap-2">
-                    <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800">
-                      {src.category}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteSource(src.id)}
-                      className="text-slate-400 hover:text-rose-600 p-1"
-                      title="Excluir Fonte"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800">
+                        {src.category}
+                      </span>
+                      {src.active === false && (
+                        <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-200 text-slate-700">
+                          Pausada
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleOpenEditSource(src)}
+                        className="text-slate-400 hover:text-indigo-600 p-1 rounded hover:bg-slate-200/60 transition-colors cursor-pointer"
+                        title="Editar Fonte"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSource(src.id)}
+                        className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-slate-200/60 transition-colors cursor-pointer"
+                        title="Excluir Fonte"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <h4 className="font-bold text-sm text-slate-900 mt-2 line-clamp-1">{src.name}</h4>
@@ -862,6 +936,142 @@ export function ScraperView({ token }: ScraperViewProps) {
         </div>
       )}
 
+      {/* Modal: Editar Fonte de Notícias */}
+      {editingSource && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Editar Fonte de Notícias</h3>
+                <p className="text-xs text-slate-500">Atualize as configurações e periodicidade desta fonte.</p>
+              </div>
+              <button
+                onClick={() => setEditingSource(null)}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateSource} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nome da Fonte
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Ex: G1 Tecnologia, Poder360, CNN Negócios"
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  URL do Feed RSS ou Categoria do Portal
+                </label>
+                <input
+                  type="url"
+                  required
+                  value={editUrl}
+                  onChange={(e) => setEditUrl(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Categoria
+                  </label>
+                  <input
+                    type="text"
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Site WP de Destino
+                  </label>
+                  <select
+                    value={editTargetSite}
+                    onChange={(e) => setEditTargetSite(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                  >
+                    <option value="">Nenhum (Manual)</option>
+                    {sites.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.siteName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Frequência de Captura Automática
+                </label>
+                <select
+                  value={editIntervalMinutes}
+                  onChange={(e) => setEditIntervalMinutes(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                >
+                  <option value={5}>A cada 5 minutos (Mais frequente)</option>
+                  <option value={15}>A cada 15 minutos (Recomendado)</option>
+                  <option value={30}>A cada 30 minutos</option>
+                  <option value={60}>A cada 1 hora</option>
+                  <option value={120}>A cada 2 horas</option>
+                  <option value={360}>A cada 6 horas</option>
+                  <option value={720}>A cada 12 horas</option>
+                  <option value={1440}>A cada 24 horas (Diário)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  O coletor monitora este portal continuamente e extrai exclusivamente o artigo mais recente, ignorando matérias já capturadas.
+                </p>
+              </div>
+
+              <div className="pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editActive}
+                    onChange={(e) => setEditActive(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="text-xs text-slate-700 font-medium">
+                    Fonte ativa (habilitada para mineração autônoma periódica)
+                  </span>
+                </label>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingSource(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingEditSource}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow disabled:opacity-50 cursor-pointer"
+                >
+                  {submittingEditSource ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Publicar no WordPress */}
       {publishModalArticle && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -951,16 +1161,6 @@ export function ScraperView({ token }: ScraperViewProps) {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4">
-              {previewArticle.imageUrl && (
-                <div className="w-full h-56 rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
-                  <img
-                    src={previewArticle.imageUrl}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-              )}
-
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 font-medium">
                   Status: <strong>{previewArticle.status}</strong>
