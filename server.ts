@@ -244,15 +244,19 @@ async function startServer() {
     }
 
     try {
-      // Self-registered accounts always start with CLIENT role to prevent privilege escalation
+      // If there are no admin accounts yet, promote the first registrant to ADMIN
+      const allUsers = dbRepo.listUsers();
+      const hasAdmin = allUsers.some((u) => u.role === UserRole.ADMIN);
+      const assignedRole = !hasAdmin ? UserRole.ADMIN : UserRole.CLIENT;
+
       const user = dbRepo.createUser({
         name,
         email,
         passwordPlain: password,
-        role: UserRole.CLIENT,
+        role: assignedRole,
         status: UserStatus.ACTIVE,
         locale,
-        department,
+        department: !hasAdmin ? 'Administração' : department,
       });
 
       const token = signJwt(
@@ -266,13 +270,13 @@ async function startServer() {
         actorId: user.id,
         actorEmail: user.email,
         actorRole: user.role,
-        action: 'AUTH_REGISTER_CLIENT',
+        action: user.role === UserRole.ADMIN ? 'AUTH_REGISTER_ROOT_ADMIN' : 'AUTH_REGISTER_CLIENT',
         category: 'auth',
         resource: '/api/auth/register',
         status: 'success',
         ipAddress: ip,
         latencyMs: Date.now() - start,
-        metadata: { department: user.department },
+        metadata: { department: user.department, role: user.role },
       });
 
       res.status(201).json({ token, user });

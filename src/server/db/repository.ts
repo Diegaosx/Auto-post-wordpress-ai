@@ -96,161 +96,15 @@ function formatDateKey(date: Date): { date: string; label: string } {
 }
 
 function createInitialSeed(): DatabaseSchemaState {
-  const now = new Date();
-  const nowIso = now.toISOString();
-
-  const initialUsers: StoredUser[] = [
-    {
-      id: 'usr_admin_01',
-      name: 'Rafael Araujo',
-      email: 'admin@kore.dev',
-      passwordHash: hashPassword('Admin@123456'),
-      role: UserRole.ADMIN,
-      status: UserStatus.ACTIVE,
-      locale: 'pt-BR',
-      department: 'Platform Architecture',
-      lastLoginAt: nowIso,
-      createdAt: new Date(now.getTime() - 28 * 86400000).toISOString(),
-      updatedAt: nowIso,
-    },
-    {
-      id: 'usr_client_01',
-      name: 'Beatriz Monteiro',
-      email: 'cliente@kore.dev',
-      passwordHash: hashPassword('Cliente@123456'),
-      role: UserRole.CLIENT,
-      status: UserStatus.ACTIVE,
-      locale: 'pt-BR',
-      department: 'Operations',
-      lastLoginAt: new Date(now.getTime() - 2 * 3600000).toISOString(),
-      createdAt: new Date(now.getTime() - 24 * 86400000).toISOString(),
-      updatedAt: nowIso,
-    },
-    {
-      id: 'usr_client_02',
-      name: 'Carlos Méndez',
-      email: 'carlos.mendez@kore.dev',
-      passwordHash: hashPassword('Cliente@123456'),
-      role: UserRole.CLIENT,
-      status: UserStatus.ACTIVE,
-      locale: 'es',
-      department: 'Finance',
-      lastLoginAt: new Date(now.getTime() - 14 * 3600000).toISOString(),
-      createdAt: new Date(now.getTime() - 19 * 86400000).toISOString(),
-      updatedAt: nowIso,
-    },
-  ];
-
-  const series: DailyMetricPoint[] = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now.getTime() - i * 86400000);
-    const { date, label } = formatDateKey(d);
-    series.push({
-      date,
-      label,
-      usersCount: 3,
-      loginsCount: Math.floor(8 + Math.sin(i / 3) * 5 + (i % 4)),
-      actionsCount: Math.floor(40 + Math.cos(i / 2) * 20 + (i % 7) * 4),
-    });
-  }
-
-  const initialLogs: AuditLog[] = [
-    {
-      id: 'log_seed_01',
-      timestamp: new Date(now.getTime() - 45 * 60000).toISOString(),
-      actorId: 'usr_admin_01',
-      actorEmail: 'admin@kore.dev',
-      actorRole: UserRole.ADMIN,
-      action: 'SYSTEM_CONFIG_INITIALIZED',
-      category: 'security',
-      resource: '/api/system/config',
-      status: 'success',
-      ipAddress: '10.24.0.1',
-      latencyMs: 12,
-      metadata: { jwtAlg: 'HS256', rateLimit: 'active', postgresSchema: 'verified' },
-    },
-  ];
-
-  const wpSites: WordPressSite[] = [
-    {
-      id: 'site_wp_01',
-      userId: 'usr_admin_01',
-      siteName: 'Portal Tech & News Brasil',
-      siteUrl: 'https://exemplo-portal-noticias.com.br',
-      apiKey: 'wp_live_78a1bc294ef03',
-      status: 'connected',
-      lastSyncAt: new Date(now.getTime() - 25 * 60000).toISOString(),
-      autoPublish: true,
-      defaultStatus: 'publish',
-      defaultCategory: 'Tecnologia',
-      createdAt: new Date(now.getTime() - 10 * 86400000).toISOString(),
-      updatedAt: nowIso,
-    },
-  ];
-
-  const wpLogs: WordPressLog[] = [
-    {
-      id: 'wplog_01',
-      siteId: 'site_wp_01',
-      siteName: 'Portal Tech & News Brasil',
-      action: 'POST_PUBLISHED',
-      status: 'success',
-      message: 'Artigo "Como a Inteligência Artificial Transforma o Mercado em 2026" publicado com sucesso (ID: 1042)',
-      details: { wpPostId: 1042, status: 'publish' },
-      timestamp: new Date(now.getTime() - 25 * 60000).toISOString(),
-    },
-  ];
-
-  const newsSources: NewsSource[] = [
-    {
-      id: 'src_g1_tec',
-      userId: 'usr_admin_01',
-      name: 'G1 — Tecnologia e Games',
-      url: 'https://g1.globo.com/rss/g1/tecnologia/',
-      type: 'rss',
-      category: 'Tecnologia',
-      targetSiteId: 'site_wp_01',
-      active: true,
-      autoRewrite: true,
-      autoPublish: false,
-      lastScrapedAt: new Date(now.getTime() - 15 * 60000).toISOString(),
-      articlesCount: 1,
-      createdAt: new Date(now.getTime() - 5 * 86400000).toISOString(),
-    },
-  ];
-
-  const capturedArticles: CapturedArticle[] = [
-    {
-      id: 'art_seed_01',
-      sourceId: 'src_g1_tec',
-      sourceName: 'G1 — Tecnologia e Games',
-      originalUrl: 'https://g1.globo.com/tecnologia/noticia/2026/03/ia-avancos-automacao.ghtml',
-      originalTitle: 'Novos avanços em IA aceleram automação em redações e portais de notícias',
-      originalContent: 'Especialistas apontam que ferramentas de IA com curadoria humana garantem velocidade e profundidade na cobertura jornalística moderna em 2026.',
-      originalExcerpt: 'Especialistas apontam que ferramentas de IA com curadoria humana garantem velocidade...',
-      imageUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=800',
-      publishedAt: new Date(now.getTime() - 60 * 60000).toISOString(),
-      status: 'ready',
-      aiTitle: 'Inteligência Artificial e Jornalismo: A Nova Era de Automação de Conteúdo em 2026',
-      aiContent: 'A integração entre modelos de linguagem e fluxos editoriais está transformando a publicação digital em escala...',
-      aiExcerpt: 'A integração entre modelos de linguagem e fluxos editoriais está transformando a publicação digital...',
-      aiSeoKeywords: ['Inteligência Artificial', 'Automação', 'Jornalismo Tech', 'WordPress'],
-      wpPostId: 1042,
-      wpSiteId: 'site_wp_01',
-      wpPermalink: 'https://exemplo-portal-noticias.com.br/ia-nova-era-automacao-2026',
-      createdAt: new Date(now.getTime() - 50 * 60000).toISOString(),
-    },
-  ];
-
   return {
-    users: initialUsers,
+    users: [],
     passwordResets: [],
-    auditLogs: initialLogs,
-    metricsDaily: series,
-    wpSites,
-    wpLogs,
-    newsSources,
-    capturedArticles,
+    auditLogs: [],
+    metricsDaily: [],
+    wpSites: [],
+    wpLogs: [],
+    newsSources: [],
+    capturedArticles: [],
     settings: DEFAULT_SETTINGS,
   };
 }
@@ -297,59 +151,7 @@ class PostgresRepository {
         await this.pool.query(ddl);
       }
 
-      // 3. Check if users table is empty; if so, seed it with canonical accounts
-      const userCountRes = await this.pool.query('SELECT COUNT(*) as count FROM users');
-      const count = Number(userCountRes.rows[0]?.count || 0);
-
-      if (count === 0) {
-        console.log('[PostgreSQL] Seeding initial canonical users and default data...');
-        for (const u of this.state.users) {
-          await this.pool.query(
-            `INSERT INTO users (id, name, email, password_hash, role, status, locale, department, last_login_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-             ON CONFLICT (id) DO NOTHING`,
-            [u.id, u.name, u.email, u.passwordHash, u.role, u.status, u.locale, u.department, u.lastLoginAt, u.createdAt, u.updatedAt]
-          );
-        }
-
-        for (const m of this.state.metricsDaily) {
-          await this.pool.query(
-            `INSERT INTO metrics_daily (metric_date, label, users_count, logins_count, actions_count, updated_at)
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             ON CONFLICT (metric_date) DO NOTHING`,
-            [m.date, m.label, m.usersCount, m.loginsCount, m.actionsCount]
-          );
-        }
-
-        for (const s of this.state.wpSites) {
-          await this.pool.query(
-            `INSERT INTO wordpress_sites (id, user_id, site_name, site_url, api_key, status, last_sync_at, auto_publish, default_status, default_category, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-             ON CONFLICT (id) DO NOTHING`,
-            [s.id, s.userId, s.siteName, s.siteUrl, s.apiKey, s.status, s.lastSyncAt, s.autoPublish, s.defaultStatus, s.defaultCategory, s.createdAt, s.updatedAt]
-          );
-        }
-
-        for (const src of this.state.newsSources) {
-          await this.pool.query(
-            `INSERT INTO news_sources (id, user_id, name, url, type, category, target_site_id, active, auto_rewrite, auto_publish, last_scraped_at, articles_count, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (id) DO NOTHING`,
-            [src.id, src.userId, src.name, src.url, src.type, src.category, src.targetSiteId, src.active, src.autoRewrite, src.autoPublish, src.lastScrapedAt, src.articlesCount || 0, src.createdAt]
-          );
-        }
-
-        for (const a of this.state.capturedArticles) {
-          await this.pool.query(
-            `INSERT INTO captured_articles (id, source_id, source_name, original_url, original_title, original_content, original_excerpt, image_url, published_at, status, ai_title, ai_content, ai_excerpt, ai_seo_keywords, wp_post_id, wp_site_id, wp_permalink, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-             ON CONFLICT (id) DO NOTHING`,
-            [a.id, a.sourceId, a.sourceName, a.originalUrl, a.originalTitle, a.originalContent, a.originalExcerpt, a.imageUrl, a.publishedAt, a.status, a.aiTitle, a.aiContent, a.aiExcerpt, JSON.stringify(a.aiSeoKeywords || []), a.wpPostId, a.wpSiteId, a.wpPermalink, a.createdAt]
-          );
-        }
-      }
-
-      // 4. Hydrate state directly from PostgreSQL
+      // 3. Hydrate state directly from PostgreSQL
       await this.hydrateFromPostgres();
       console.log(`[PostgreSQL] Hydrated ${this.state.users.length} users, ${this.state.wpSites.length} WP sites, ${this.state.newsSources.length} sources, ${this.state.capturedArticles.length} articles.`);
     } catch (err: any) {
@@ -1169,6 +971,7 @@ class PostgresRepository {
       browserTitle: s.browserTitle,
       logoText: s.logoText,
       logoUrl: s.logoUrl,
+      hasUsers: this.state.users.length > 0,
     };
   }
 

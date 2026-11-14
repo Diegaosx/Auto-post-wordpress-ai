@@ -45,23 +45,17 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  // Default to register mode on fresh installation if no users exist
+  useEffect(() => {
+    if (branding?.hasUsers === false) {
+      setMode('register');
+    }
+  }, [branding?.hasUsers]);
+
   const switchMode = (target: AuthMode) => {
     setMode(target);
     setErrorMsg(null);
     setInfoMsg(null);
-  };
-
-  const handleQuickFill = (role: 'admin' | 'client') => {
-    setMode('login');
-    setErrorMsg(null);
-    setInfoMsg(null);
-    if (role === 'admin') {
-      setEmail('admin@kore.dev');
-      setPassword('Admin@123456');
-    } else {
-      setEmail('cliente@kore.dev');
-      setPassword('Cliente@123456');
-    }
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -217,12 +211,24 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
 
         {/* Center Form Area */}
         <div className="w-full max-w-sm mx-auto my-10">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 mb-6">
-            {mode === 'login' && t.auth.signInTitle}
-            {mode === 'register' && t.auth.registerTitle}
-            {mode === 'forgot' && t.auth.forgotTitle}
-            {mode === 'reset' && t.auth.resetTitle}
-          </h1>
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              {mode === 'login' && t.auth.signInTitle}
+              {mode === 'register' && (branding?.hasUsers === false ? 'Cadastrar Administrador' : t.auth.registerTitle)}
+              {mode === 'forgot' && t.auth.forgotTitle}
+              {mode === 'reset' && t.auth.resetTitle}
+            </h1>
+            {mode === 'register' && branding?.hasUsers === false && (
+              <p className="mt-1.5 text-xs text-slate-600">
+                Primeiro acesso à plataforma: crie sua conta de administrador para ter controle total do painel, sites e motores de IA.
+              </p>
+            )}
+            {mode === 'login' && branding?.hasUsers === false && (
+              <p className="mt-2 text-xs text-amber-800 bg-amber-50 p-2.5 rounded-md border border-amber-200">
+                Nenhum usuário cadastrado ainda. Clique em "Cadastrar Administrador" abaixo para começar.
+              </p>
+            )}
+          </div>
 
           {errorMsg && (
             <div
@@ -327,36 +333,16 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {/* Quick Demo Credentials */}
-              <div className="pt-4 mt-4 border-t border-slate-200">
-                <span className="block text-xs text-slate-500 mb-2">
-                  {t.auth.quickAccessLabel}
+              <div className="pt-4 mt-2 border-t border-slate-200 text-center">
+                <span className="text-xs text-slate-500 mr-1.5">
+                  {branding?.hasUsers === false ? 'Primeiro acesso à plataforma?' : 'Ainda não possui conta?'}
                 </span>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickFill('admin')}
-                    className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors text-center whitespace-nowrap cursor-pointer"
-                  >
-                    {t.auth.quickAdminButton}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleQuickFill('client')}
-                    className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors text-center whitespace-nowrap cursor-pointer"
-                  >
-                    {t.auth.quickClientButton}
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-3 text-center">
                 <button
                   type="button"
                   onClick={() => switchMode('register')}
-                  className="text-xs font-medium text-slate-700 hover:text-slate-900 underline underline-offset-4 cursor-pointer"
+                  className="text-xs font-semibold text-slate-900 hover:underline cursor-pointer"
                 >
-                  {t.auth.createAccountLink}
+                  {branding?.hasUsers === false ? 'Cadastrar Administrador' : t.auth.createAccountLink}
                 </button>
               </div>
             </form>
@@ -442,7 +428,7 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
                 disabled={loading}
                 className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-sm font-medium rounded-md transition-colors cursor-pointer"
               >
-                {t.auth.registerButton}
+                {branding?.hasUsers === false ? 'Cadastrar Administrador e Acessar' : t.auth.registerButton}
               </button>
 
               <div className="pt-2 text-center">

@@ -232,6 +232,8 @@ export interface SystemSettings {
 export type PublicBrandingSettings = Pick<
   SystemSettings,
   'platformName' | 'platformTagline' | 'browserTitle' | 'logoText' | 'logoUrl'
->;
+> & {
+  hasUsers?: boolean;
+};
 
 
