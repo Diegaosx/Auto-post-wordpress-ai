@@ -3,6 +3,8 @@ import { dbRepo } from '../db/repository';
 import { executeLlmPrompt } from './llm-gateway';
 import { CapturedArticle, NewsSource, ArticleRewriteOptions } from '../../shared/types';
 import { syncArticleToWordPress } from './wordpress-sync';
+import { extractArticle } from './article-extractor';
+import { uploadArticleJson, uploadFeedJson } from './r2-sync';
 
 const rssParser = new Parser({
   customFields: {
@@ -96,7 +98,7 @@ export async function scrapeSource(sourceId: string): Promise<{
       continue;
     }
 
-    // Extrair imagem
+    // Extrair imagem inicial
     let imgUrl: string | null = null;
     if (item.enclosure?.url) {
       imgUrl = item.enclosure.url;
@@ -108,18 +110,45 @@ export async function scrapeSource(sourceId: string): Promise<{
       imgUrl = extractImageUrlFromHtml(item.content || '');
     }
 
-    const excerpt = item.contentSnippet ? cleanHtmlTags(item.contentSnippet).slice(0, 250) : '';
-    const rawContent = item.content || item.contentSnippet || title;
+    // 1. Extração profunda com DOM/Cheerio (Arquitetura painel-agy)
+    let extracted: any = null;
+    try {
+      extracted = await extractArticle(link);
+    } catch (e: any) {
+      console.warn(`[Scraper] Extração profunda falhou para ${link}, usando dados do feed:`, e.message);
+    }
 
-    const newArticle = dbRepo.createCapturedArticle({
+    const finalUrl = extracted?.canonical_url || link;
+    if (finalUrl !== link && dbRepo.checkArticleUrlExists(finalUrl)) {
+      continue;
+    }
+
+    const finalTitle = extracted?.title || title;
+    const finalSubtitle = extracted?.subtitle || undefined;
+    const finalAuthor = extracted?.author || undefined;
+    const finalCleanHtml = extracted?.clean_content_html || undefined;
+    const finalCleanText = extracted?.clean_content_text || undefined;
+    const finalExcerpt = extracted?.summary || (item.contentSnippet ? cleanHtmlTags(item.contentSnippet).slice(0, 250) : '');
+    const finalImage = extracted?.featured_image_url || imgUrl;
+    const finalMediaData = extracted?.media_data || undefined;
+    const finalTags = extracted?.tags && extracted.tags.length > 0 ? extracted.tags : [];
+    const rawContent = finalCleanHtml || item.content || item.contentSnippet || finalTitle;
+
+    let newArticle = dbRepo.createCapturedArticle({
       sourceId: source.id,
       sourceName: source.name,
-      originalUrl: link,
-      originalTitle: title,
+      originalUrl: finalUrl,
+      originalTitle: finalTitle,
       originalContent: rawContent,
-      originalExcerpt: excerpt,
-      imageUrl: imgUrl,
-      publishedAt: item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
+      originalExcerpt: finalExcerpt,
+      subtitle: finalSubtitle,
+      author: finalAuthor,
+      cleanHtml: finalCleanHtml,
+      cleanText: finalCleanText,
+      imageUrl: finalImage,
+      mediaData: finalMediaData,
+      tags: finalTags,
+      publishedAt: extracted?.published_at || (item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString()),
       status: 'pending',
       aiTitle: null,
       aiContent: null,
@@ -130,19 +159,46 @@ export async function scrapeSource(sourceId: string): Promise<{
       wpPermalink: null,
     });
 
+    // 2. Upload para Cloudflare R2 Edge Storage
+    const settings = dbRepo.getSystemSettings();
+    if (settings.r2AutoSync !== false) {
+      try {
+        const r2Url = await uploadArticleJson(newArticle);
+        if (r2Url) {
+          newArticle = dbRepo.updateCapturedArticle(newArticle.id, { r2JsonUrl: r2Url }) || newArticle;
+        }
+      } catch (r2Err: any) {
+        console.warn(`[Scraper] Erro ao sincronizar artigo ${newArticle.id} no R2:`, r2Err.message);
+      }
+    }
+
     newCount++;
     capturedList.push(newArticle);
 
-    // Auto-reescrever se configurado na fonte
+    // 3. Auto-reescrever com IA se configurado na fonte
     if (source.autoRewrite) {
       try {
-        await rewriteArticleWithAi(newArticle.id, {
+        const rewritten = await rewriteArticleWithAi(newArticle.id, {
           targetSiteId: source.targetSiteId || undefined,
           autoPublish: source.autoPublish,
         });
+        if (rewritten) {
+          newArticle = rewritten;
+        }
       } catch (aiErr) {
         console.error(`[Scraper] Falha ao auto-reescrever artigo ${newArticle.id}:`, aiErr);
       }
+    }
+  }
+
+  // 4. Atualizar feeds agregados no Cloudflare R2 (Recife Timezone)
+  const currentSettings = dbRepo.getSystemSettings();
+  if (currentSettings.r2AutoSync !== false) {
+    try {
+      const recentArticles = dbRepo.getCapturedArticles({ limit: 100 });
+      await uploadFeedJson(recentArticles);
+    } catch (feedErr: any) {
+      console.warn('[Scraper] Erro ao sincronizar feeds agregados no R2:', feedErr.message);
     }
   }
 
@@ -215,11 +271,13 @@ REGRAS OBRIGATÓRIAS:
    - "keywords": string[] (array de strings)
 Não inclua nenhuma outra palavra ou markdown fora do JSON.`;
 
+  const baseContent = (article.cleanText || cleanHtmlTags(article.cleanHtml || '') || article.originalContent || '').slice(0, 4500);
+
   const userPrompt = `Notícia Original:
 Título: ${article.originalTitle}
-Link Original: ${article.originalUrl}
+${article.subtitle ? `Subtítulo: ${article.subtitle}\n` : ''}${article.author ? `Autor: ${article.author}\n` : ''}Link Original: ${article.originalUrl}
 Trecho / Conteúdo Base:
-${article.originalContent.slice(0, 3000)}
+${baseContent}
 
 Tom editorial desejado: ${tone}
 Por favor, reescreva em português com padrão editorial profissional e otimizado para SEO.`;
@@ -253,7 +311,7 @@ Por favor, reescreva em português com padrão editorial profissional e otimizad
       };
     }
 
-    const updated = dbRepo.updateCapturedArticle(articleId, {
+    let updated = dbRepo.updateCapturedArticle(articleId, {
       status: 'ready',
       aiTitle: parsed.title || article.originalTitle,
       aiContent: parsed.content || article.originalContent,
@@ -268,6 +326,20 @@ Por favor, reescreva em português com padrão editorial profissional e otimizad
     // Se autoPublish estiver ativado e houver um site de destino
     if (options?.autoPublish && options?.targetSiteId) {
       await syncArticleToWordPress(articleId, options.targetSiteId);
+      // Recarrega o artigo atualizado com os links do WordPress
+      updated = dbRepo.getCapturedArticleById(articleId) || updated;
+    }
+
+    // Sincroniza artigo reescrito com o Cloudflare R2
+    if (settings.r2AutoSync !== false) {
+      try {
+        const r2Url = await uploadArticleJson(updated);
+        if (r2Url && r2Url !== updated.r2JsonUrl) {
+          updated = dbRepo.updateCapturedArticle(articleId, { r2JsonUrl: r2Url }) || updated;
+        }
+      } catch (r2Err: any) {
+        console.warn(`[Scraper] Falha ao atualizar R2 após reescrita do artigo ${articleId}:`, r2Err.message);
+      }
     }
 
     return updated;
@@ -278,4 +350,57 @@ Por favor, reescreva em português com padrão editorial profissional e otimizad
     });
     throw error;
   }
+}
+
+/**
+ * Força a sincronização de um artigo com o Cloudflare R2
+ */
+export async function syncArticleToR2(articleId: string): Promise<string | null> {
+  const article = dbRepo.getCapturedArticleById(articleId);
+  if (!article) {
+    throw new Error(`Artigo com ID ${articleId} não encontrado.`);
+  }
+  const r2Url = await uploadArticleJson(article);
+  if (r2Url) {
+    dbRepo.updateCapturedArticle(articleId, { r2JsonUrl: r2Url });
+  }
+  return r2Url;
+}
+
+/**
+ * Sincroniza todos os artigos capturados para o Cloudflare R2
+ */
+export async function syncAllArticlesToR2(): Promise<{ total: number; synced: number; feedsSynced: boolean }> {
+  const articles = dbRepo.getCapturedArticles({ limit: 500 });
+  let synced = 0;
+
+  for (const art of articles) {
+    try {
+      const url = await uploadArticleJson(art);
+      if (url) {
+        dbRepo.updateCapturedArticle(art.id, { r2JsonUrl: url });
+        synced++;
+      }
+    } catch (e: any) {
+      console.warn(`[R2 Sync All] Falha no artigo ${art.id}:`, e.message);
+    }
+  }
+
+  let feedsSynced = false;
+  try {
+    const feedResult = await uploadFeedJson(articles);
+    feedsSynced = Boolean(feedResult);
+  } catch (feedErr: any) {
+    console.warn('[R2 Sync All] Falha ao sincronizar feeds:', feedErr.message);
+  }
+
+  return { total: articles.length, synced, feedsSynced };
+}
+
+/**
+ * Atualiza feeds agregados particionados por fuso de Recife no Cloudflare R2
+ */
+export async function syncFeedsToR2(): Promise<any> {
+  const articles = dbRepo.getCapturedArticles({ limit: 200 });
+  return await uploadFeedJson(articles);
 }

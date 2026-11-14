@@ -19,6 +19,7 @@ import {
   FileText,
   Tag,
   Calendar,
+  Cloud,
 } from 'lucide-react';
 
 interface ScraperViewProps {
@@ -40,6 +41,9 @@ export function ScraperView({ token }: ScraperViewProps) {
   const [scrapingSourceId, setScrapingSourceId] = useState<string | null>(null);
   const [rewritingArticleId, setRewritingArticleId] = useState<string | null>(null);
   const [publishingArticleId, setPublishingArticleId] = useState<string | null>(null);
+  const [syncingArticleR2Id, setSyncingArticleR2Id] = useState<string | null>(null);
+  const [syncingR2All, setSyncingR2All] = useState(false);
+  const [syncingFeedsR2, setSyncingFeedsR2] = useState(false);
 
   // Modals
   const [showAddSourceModal, setShowAddSourceModal] = useState(false);
@@ -181,6 +185,74 @@ export function ScraperView({ token }: ScraperViewProps) {
     }
   };
 
+  const handleSyncArticleR2 = async (articleId: string) => {
+    setSyncingArticleR2Id(articleId);
+    setActionMessage(null);
+    try {
+      const res = await fetch(`/api/scraper/articles/${articleId}/sync-r2`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage({ type: 'success', text: 'Artigo sincronizado no Cloudflare R2 com sucesso!' });
+        fetchData();
+        if (previewArticle?.id === articleId) {
+          setPreviewArticle({ ...previewArticle, r2JsonUrl: data.url });
+        }
+      } else {
+        setActionMessage({ type: 'error', text: data.error || 'Falha ao sincronizar artigo no R2.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setSyncingArticleR2Id(null);
+    }
+  };
+
+  const handleSyncAllR2 = async () => {
+    setSyncingR2All(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/scraper/sync-r2-all', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage({ type: 'success', text: data.message });
+        fetchData();
+      } else {
+        setActionMessage({ type: 'error', text: data.error || 'Falha na sincronização completa R2.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setSyncingR2All(false);
+    }
+  };
+
+  const handleSyncFeedsR2 = async () => {
+    setSyncingFeedsR2(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch('/api/scraper/sync-r2-feeds', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionMessage({ type: 'success', text: data.message });
+      } else {
+        setActionMessage({ type: 'error', text: data.error || 'Falha ao sincronizar feeds R2.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message });
+    } finally {
+      setSyncingFeedsR2(false);
+    }
+  };
+
   const handleDeleteSource = async (sourceId: string) => {
     if (!window.confirm('Tem certeza que deseja remover esta fonte de notícias?')) return;
     try {
@@ -264,7 +336,25 @@ export function ScraperView({ token }: ScraperViewProps) {
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center flex-wrap gap-2.5">
+          <button
+            onClick={handleSyncAllR2}
+            disabled={syncingR2All}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 shadow-xs cursor-pointer disabled:opacity-60"
+            title="Enviar todos os artigos capturados para o Cloudflare R2 e atualizar feeds"
+          >
+            <Cloud className={`w-3.5 h-3.5 ${syncingR2All ? 'animate-spin' : ''}`} />
+            {syncingR2All ? 'Sincronizando R2...' : 'Sincronizar R2'}
+          </button>
+          <button
+            onClick={handleSyncFeedsR2}
+            disabled={syncingFeedsR2}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-xs cursor-pointer disabled:opacity-60"
+            title="Atualizar feeds agregados (janelas de 6h Recife) no Cloudflare R2"
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-500" />
+            {syncingFeedsR2 ? 'Atualizando...' : 'Feeds R2'}
+          </button>
           <button
             onClick={() => fetchData()}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm cursor-pointer"
@@ -527,6 +617,19 @@ export function ScraperView({ token }: ScraperViewProps) {
                         <Sparkles className="w-2.5 h-2.5" /> GERANDO IA...
                       </span>
                     )}
+
+                    {/* R2 Cloud Storage Badge */}
+                    {art.r2JsonUrl && (
+                      <a
+                        href={art.r2JsonUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100 transition-colors"
+                        title="Ver JSON no Cloudflare R2 Edge Storage"
+                      >
+                        <Cloud className="w-2.5 h-2.5 text-orange-500" /> JSON R2
+                      </a>
+                    )}
                   </div>
 
                   <h4 className="font-bold text-sm text-slate-900 leading-snug">
@@ -536,6 +639,18 @@ export function ScraperView({ token }: ScraperViewProps) {
                       art.originalTitle
                     )}
                   </h4>
+
+                  {art.subtitle && (
+                    <p className="text-xs text-slate-500 font-medium italic mt-0.5 line-clamp-1">
+                      {art.subtitle}
+                    </p>
+                  )}
+
+                  {art.author && (
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Por: <span className="text-slate-600 font-medium">{art.author}</span>
+                    </p>
+                  )}
 
                   {art.aiTitle && (
                     <p className="text-xs text-slate-400 line-clamp-1 mt-0.5">
@@ -568,6 +683,14 @@ export function ScraperView({ token }: ScraperViewProps) {
                       title="Ver Prévia Completa"
                     >
                       <Eye className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleSyncArticleR2(art.id)}
+                      disabled={syncingArticleR2Id === art.id}
+                      className="p-1.5 text-slate-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer"
+                      title="Sincronizar Artigo no Cloudflare R2"
+                    >
+                      <Cloud className={`w-4 h-4 ${syncingArticleR2Id === art.id ? 'animate-spin text-orange-500' : ''}`} />
                     </button>
                     <a
                       href={art.wpPermalink || art.originalUrl}
@@ -862,7 +985,30 @@ export function ScraperView({ token }: ScraperViewProps) {
                 >
                   Link da Fonte Original <ExternalLink className="w-3 h-3" />
                 </a>
+
+                {previewArticle.r2JsonUrl && (
+                  <a
+                    href={previewArticle.r2JsonUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-2.5 py-1 rounded-md bg-orange-50 text-orange-700 font-medium hover:underline flex items-center gap-1 border border-orange-200"
+                  >
+                    <Cloud className="w-3 h-3 text-orange-500" /> Ver JSON no Cloudflare R2 <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
               </div>
+
+              {previewArticle.subtitle && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 font-medium italic">
+                  {previewArticle.subtitle}
+                </div>
+              )}
+
+              {previewArticle.author && (
+                <div className="text-xs text-slate-500">
+                  Autor reportado: <strong className="text-slate-800">{previewArticle.author}</strong>
+                </div>
+              )}
 
               <div>
                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">

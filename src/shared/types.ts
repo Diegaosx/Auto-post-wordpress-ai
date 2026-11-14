@@ -158,7 +158,7 @@ export interface NewsSource {
   userId: string;
   name: string;
   url: string;
-  type: 'rss' | 'portal_html' | 'google_news';
+  type: 'rss' | 'portal_html' | 'google_news' | 'espn' | 'workana';
   category: string;
   targetSiteId: string | null;
   active: boolean;
@@ -167,6 +167,27 @@ export interface NewsSource {
   lastScrapedAt: string | null;
   articlesCount?: number;
   createdAt: string;
+}
+
+export interface ArticleMediaData {
+  featuredImage?: {
+    url: string;
+    alt?: string;
+    title?: string;
+    caption?: string;
+  } | null;
+  internalImages?: Array<{
+    url: string;
+    alt?: string;
+    caption?: string;
+  }>;
+  videos?: Array<{
+    type: string;
+    url: string;
+    title?: string;
+    thumbnail?: string;
+    description?: string;
+  }>;
 }
 
 export interface CapturedArticle {
@@ -189,6 +210,15 @@ export interface CapturedArticle {
   wpPermalink: string | null;
   errorMessage?: string | null;
   createdAt: string;
+
+  // Painel AGY Extração Profunda & Cloudflare R2
+  subtitle?: string;
+  author?: string;
+  cleanHtml?: string;
+  cleanText?: string;
+  r2JsonUrl?: string | null;
+  mediaData?: ArticleMediaData;
+  tags?: string[];
 }
 
 export interface ArticleRewriteOptions {
@@ -227,6 +257,15 @@ export interface SystemSettings {
   autoRewriteArticles: boolean;
   autoPublishToWordPress: boolean;
   defaultRewriteTone: 'jornalistico' | 'persuasivo' | 'analitico' | 'didatico';
+
+  // 4. Armazenamento em Nuvem Cloudflare R2
+  r2AccountId?: string;
+  r2AccessKeyId?: string;
+  r2SecretAccessKey?: string;
+  r2BucketName?: string;
+  r2PublicUrl?: string;
+  r2AutoSync?: boolean;
+  r2SyncEnabled?: boolean;
 }
 
 export type PublicBrandingSettings = Pick<

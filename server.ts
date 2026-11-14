@@ -21,7 +21,14 @@ import { dbRepo } from './src/server/db/repository';
 import { queueCacheManager } from './src/server/infra/queue-cache';
 import { executeLlmPrompt } from './src/server/services/llm-gateway';
 import { mailService } from './src/server/services/mail-service';
-import { scrapeSource, rewriteArticleWithAi } from './src/server/services/scraper-service';
+import {
+  scrapeSource,
+  rewriteArticleWithAi,
+  syncArticleToR2,
+  syncAllArticlesToR2,
+  syncFeedsToR2,
+} from './src/server/services/scraper-service';
+import { testR2Connection } from './src/server/services/r2-sync';
 import { syncArticleToWordPress, testWordPressConnection } from './src/server/services/wordpress-sync';
 import {
   UserRole,
@@ -1213,6 +1220,38 @@ async function startServer() {
     res.json({ success: true, message: 'Artigo removido.' });
   });
 
+  // Cloudflare R2 Sync Endpoints
+  app.post('/api/scraper/articles/:id/sync-r2', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const url = await syncArticleToR2(req.params.id);
+      res.json({ success: true, url, message: 'Artigo sincronizado com Cloudflare R2 com sucesso!' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/scraper/sync-r2-all', requireAuth, async (_req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await syncAllArticlesToR2();
+      res.json({
+        success: true,
+        message: `${result.synced} de ${result.total} artigos sincronizados no Cloudflare R2. Feeds atualizados.`,
+        ...result,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/scraper/sync-r2-feeds', requireAuth, async (_req: AuthenticatedRequest, res: Response) => {
+    try {
+      const result = await syncFeedsToR2();
+      res.json({ success: true, message: 'Feeds particionados por fuso de Recife atualizados no R2!', feeds: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ==========================================================================
   // 10. SYSTEM SETTINGS & AI ENGINE CONFIGURATION
   // ==========================================================================
@@ -1223,6 +1262,7 @@ async function startServer() {
       hasOpenRouterKey: Boolean(raw.openRouterApiKey),
       hasGeminiKey: Boolean(raw.geminiApiKey),
       hasLlamaKey: Boolean(raw.llamaApiKey),
+      hasR2Configured: Boolean(raw.r2AccountId && raw.r2AccessKeyId && raw.r2SecretAccessKey),
     });
   });
 
@@ -1238,6 +1278,9 @@ async function startServer() {
     }
     if (updates.llamaApiKey === '' && current.llamaApiKey) {
       delete updates.llamaApiKey;
+    }
+    if (updates.r2SecretAccessKey === '' && current.r2SecretAccessKey) {
+      delete updates.r2SecretAccessKey;
     }
 
     const updated = dbRepo.updateSystemSettings(updates);
@@ -1260,6 +1303,22 @@ async function startServer() {
       message: 'Configurações atualizadas com sucesso.',
       settings: updated,
     });
+  });
+
+  app.post('/api/settings/r2/test', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+    const { accountId, accessKeyId, secretAccessKey, bucketName, publicUrl } = req.body || {};
+    try {
+      const result = await testR2Connection({
+        accountId,
+        accessKeyId,
+        secretAccessKey,
+        bucketName,
+        publicUrl,
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   app.post('/api/settings/ai/test', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
@@ -1303,7 +1362,28 @@ async function startServer() {
   }
 
   app.listen(env.PORT, '0.0.0.0', () => {
-    console.log(`Kore Base Platform listening on http://0.0.0.0:${env.PORT}`);
+    console.log(`Auto Post WordPress AI platform listening on http://0.0.0.0:${env.PORT}`);
+
+    // Background Autonomous Scraping Loop (Railway / Continuous Server)
+    const intervalMinutes = env.COLLECTOR_INTERVAL_MINUTES || 5;
+    console.log(`[Collector Background] Agendador automático configurado para cada ${intervalMinutes} minutos.`);
+
+    setInterval(async () => {
+      try {
+        const sources = dbRepo.getNewsSources().filter((s) => s.active);
+        if (sources.length === 0) return;
+        console.log(`[Collector Background] Iniciando ciclo para ${sources.length} fontes ativas...`);
+        for (const s of sources) {
+          try {
+            await scrapeSource(s.id);
+          } catch (err: any) {
+            console.warn(`[Collector Background] Erro ao coletar fonte "${s.name}" (${s.id}):`, err.message);
+          }
+        }
+      } catch (cycleErr: any) {
+        console.error('[Collector Background] Erro no ciclo de coleta:', cycleErr.message);
+      }
+    }, intervalMinutes * 60 * 1000);
   });
 }
 

@@ -139,14 +139,66 @@ CREATE TABLE IF NOT EXISTS captured_articles (
   wp_site_id VARCHAR(64),
   wp_permalink TEXT,
   error_message TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  subtitle TEXT,
+  author VARCHAR(255),
+  clean_html TEXT,
+  clean_text TEXT,
+  r2_json_url TEXT,
+  media_data JSONB DEFAULT '{}'::jsonb,
+  tags JSONB DEFAULT '[]'::jsonb
 );
 
 CREATE INDEX IF NOT EXISTS idx_captured_articles_source_id ON captured_articles (source_id);
 CREATE INDEX IF NOT EXISTS idx_captured_articles_status ON captured_articles (status);
 CREATE INDEX IF NOT EXISTS idx_captured_articles_created_at ON captured_articles (created_at DESC);
 
--- 9. SYSTEM SETTINGS TABLE (Branding, White-Label & AI Engine)
+-- 9. SOURCES & CAPTURED ITEMS (Daemon Painel AGY & VPS Compatibility)
+CREATE TABLE IF NOT EXISTS sources (
+  id VARCHAR(64) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(64) NOT NULL,
+  url TEXT NOT NULL,
+  category VARCHAR(128) DEFAULT 'Geral',
+  interval_seconds INTEGER DEFAULT 300,
+  last_checked_at TIMESTAMPTZ,
+  last_status VARCHAR(32) DEFAULT 'pending',
+  last_error TEXT,
+  etag TEXT,
+  last_modified TEXT,
+  auto_publish INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sources_active ON sources(is_active);
+
+CREATE TABLE IF NOT EXISTS captured_items (
+  id VARCHAR(128) PRIMARY KEY,
+  source_id VARCHAR(64) NOT NULL,
+  source_name TEXT,
+  category TEXT,
+  title TEXT NOT NULL,
+  subtitle TEXT,
+  author TEXT,
+  url TEXT NOT NULL,
+  summary TEXT,
+  clean_content_html TEXT,
+  clean_content_text TEXT,
+  published_at TEXT,
+  published_at_raw TEXT,
+  captured_at TIMESTAMPTZ DEFAULT NOW(),
+  status VARCHAR(32) DEFAULT 'new',
+  r2_json_url TEXT,
+  featured_image_url TEXT,
+  media_data JSONB,
+  budget TEXT,
+  metadata_json JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_items_captured_at ON captured_items(captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_items_status ON captured_items(status);
+CREATE INDEX IF NOT EXISTS idx_items_source_id ON captured_items(source_id);
+
+-- 10. SYSTEM SETTINGS TABLE (Branding, White-Label & AI Engine)
 CREATE TABLE IF NOT EXISTS system_settings (
   id VARCHAR(64) PRIMARY KEY DEFAULT 'global_config',
   settings JSONB NOT NULL DEFAULT '{}'::jsonb,

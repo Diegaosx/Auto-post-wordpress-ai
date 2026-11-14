@@ -80,6 +80,12 @@ Não inclua nenhuma outra palavra ou markdown fora do JSON.`,
   autoRewriteArticles: true,
   autoPublishToWordPress: false,
   defaultRewriteTone: 'jornalistico',
+  r2AccountId: env.R2_ACCOUNT_ID,
+  r2AccessKeyId: env.R2_ACCESS_KEY_ID,
+  r2SecretAccessKey: env.R2_SECRET_ACCESS_KEY,
+  r2BucketName: env.R2_BUCKET_NAME,
+  r2PublicUrl: env.R2_PUBLIC_URL,
+  r2AutoSync: true,
 };
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
@@ -226,6 +232,13 @@ class PostgresRepository {
       originalTitle: r.original_title,
       originalContent: r.original_content,
       originalExcerpt: r.original_excerpt || '',
+      subtitle: r.subtitle || undefined,
+      author: r.author || undefined,
+      cleanHtml: r.clean_html || undefined,
+      cleanText: r.clean_text || undefined,
+      r2JsonUrl: r.r2_json_url || undefined,
+      mediaData: typeof r.media_data === 'object' && r.media_data !== null ? r.media_data : undefined,
+      tags: Array.isArray(r.tags) ? r.tags : (typeof r.tags === 'string' ? JSON.parse(r.tags || '[]') : undefined),
       imageUrl: r.image_url,
       publishedAt: r.published_at ? new Date(r.published_at).toISOString() : null,
       status: r.status,
@@ -794,6 +807,13 @@ class PostgresRepository {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [source.id, source.userId, source.name, source.url, source.type, source.category, source.targetSiteId || null, source.active, source.autoRewrite, source.autoPublish, source.lastScrapedAt || null, source.articlesCount || 0, source.createdAt]
       ).catch((err: any) => console.error('[PostgreSQL] Error inserting news source:', err.message));
+
+      this.pool.query(
+        `INSERT INTO sources (id, name, type, url, category, interval_seconds, auto_publish, is_active, created_at)
+         VALUES ($1, $2, $3, $4, $5, 300, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, url=EXCLUDED.url, type=EXCLUDED.type, category=EXCLUDED.category, auto_publish=EXCLUDED.auto_publish, is_active=EXCLUDED.is_active`,
+        [source.id, source.name, source.type, source.url, source.category, source.autoPublish ? 1 : 0, source.active ? 1 : 0, source.createdAt]
+      ).catch((err: any) => console.warn('[PostgreSQL] Error mirroring to sources table:', err.message));
     }
 
     return source;
@@ -894,12 +914,24 @@ class PostgresRepository {
 
     if (this.pool) {
       this.pool.query(
-        `INSERT INTO captured_articles (id, source_id, source_name, original_url, original_title, original_content, original_excerpt, image_url, published_at, status, ai_title, ai_content, ai_excerpt, ai_seo_keywords, wp_post_id, wp_site_id, wp_permalink, error_message, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        `INSERT INTO captured_articles (
+           id, source_id, source_name, original_url, original_title, original_content, original_excerpt,
+           subtitle, author, clean_html, clean_text, r2_json_url, media_data, tags,
+           image_url, published_at, status, ai_title, ai_content, ai_excerpt, ai_seo_keywords,
+           wp_post_id, wp_site_id, wp_permalink, error_message, created_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
          ON CONFLICT (original_url) DO UPDATE SET
            original_title = EXCLUDED.original_title,
            original_content = EXCLUDED.original_content,
            original_excerpt = EXCLUDED.original_excerpt,
+           subtitle = EXCLUDED.subtitle,
+           author = EXCLUDED.author,
+           clean_html = EXCLUDED.clean_html,
+           clean_text = EXCLUDED.clean_text,
+           r2_json_url = EXCLUDED.r2_json_url,
+           media_data = EXCLUDED.media_data,
+           tags = EXCLUDED.tags,
            image_url = EXCLUDED.image_url,
            status = EXCLUDED.status,
            ai_title = EXCLUDED.ai_title,
@@ -910,8 +942,75 @@ class PostgresRepository {
            wp_site_id = EXCLUDED.wp_site_id,
            wp_permalink = EXCLUDED.wp_permalink,
            error_message = EXCLUDED.error_message`,
-        [article.id, article.sourceId, article.sourceName, article.originalUrl, article.originalTitle, article.originalContent, article.originalExcerpt || '', article.imageUrl || null, article.publishedAt || null, article.status, article.aiTitle || null, article.aiContent || null, article.aiExcerpt || null, JSON.stringify(article.aiSeoKeywords || []), article.wpPostId || null, article.wpSiteId || null, article.wpPermalink || null, article.errorMessage || null, article.createdAt]
+        [
+          article.id,
+          article.sourceId,
+          article.sourceName,
+          article.originalUrl,
+          article.originalTitle,
+          article.originalContent,
+          article.originalExcerpt || '',
+          article.subtitle || null,
+          article.author || null,
+          article.cleanHtml || null,
+          article.cleanText || null,
+          article.r2JsonUrl || null,
+          article.mediaData ? JSON.stringify(article.mediaData) : null,
+          JSON.stringify(article.tags || []),
+          article.imageUrl || null,
+          article.publishedAt || null,
+          article.status,
+          article.aiTitle || null,
+          article.aiContent || null,
+          article.aiExcerpt || null,
+          JSON.stringify(article.aiSeoKeywords || []),
+          article.wpPostId || null,
+          article.wpSiteId || null,
+          article.wpPermalink || null,
+          article.errorMessage || null,
+          article.createdAt,
+        ]
       ).catch((err: any) => console.error('[PostgreSQL] Error inserting captured article:', err.message));
+
+      this.pool.query(
+        `INSERT INTO captured_items (
+           id, source_id, source_name, category, title, subtitle, author, url, summary,
+           clean_content_html, clean_content_text, published_at, published_at_raw, captured_at,
+           status, r2_json_url, featured_image_url, media_data
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           subtitle = EXCLUDED.subtitle,
+           author = EXCLUDED.author,
+           summary = EXCLUDED.summary,
+           clean_content_html = EXCLUDED.clean_content_html,
+           clean_content_text = EXCLUDED.clean_content_text,
+           status = EXCLUDED.status,
+           r2_json_url = EXCLUDED.r2_json_url,
+           featured_image_url = EXCLUDED.featured_image_url,
+           media_data = EXCLUDED.media_data`,
+        [
+          article.id,
+          article.sourceId,
+          article.sourceName,
+          'Geral',
+          article.originalTitle,
+          article.subtitle || null,
+          article.author || null,
+          article.originalUrl,
+          article.originalExcerpt || '',
+          article.cleanHtml || null,
+          article.cleanText || null,
+          article.publishedAt || null,
+          article.publishedAt || null,
+          article.createdAt,
+          article.status,
+          article.r2JsonUrl || null,
+          article.imageUrl || null,
+          article.mediaData ? JSON.stringify(article.mediaData) : null,
+        ]
+      ).catch((err: any) => console.warn('[PostgreSQL] Syncing to captured_items warning:', err.message));
     }
 
     return article;
@@ -930,9 +1029,59 @@ class PostgresRepository {
 
     if (this.pool) {
       this.pool.query(
-        `UPDATE captured_articles SET source_id=$1, source_name=$2, original_title=$3, original_content=$4, original_excerpt=$5, image_url=$6, published_at=$7, status=$8, ai_title=$9, ai_content=$10, ai_excerpt=$11, ai_seo_keywords=$12, wp_post_id=$13, wp_site_id=$14, wp_permalink=$15, error_message=$16 WHERE id=$17`,
-        [updated.sourceId, updated.sourceName, updated.originalTitle, updated.originalContent, updated.originalExcerpt || '', updated.imageUrl || null, updated.publishedAt || null, updated.status, updated.aiTitle || null, updated.aiContent || null, updated.aiExcerpt || null, JSON.stringify(updated.aiSeoKeywords || []), updated.wpPostId || null, updated.wpSiteId || null, updated.wpPermalink || null, updated.errorMessage || null, updated.id]
+        `UPDATE captured_articles SET
+           source_id=$1, source_name=$2, original_title=$3, original_content=$4, original_excerpt=$5,
+           subtitle=$6, author=$7, clean_html=$8, clean_text=$9, r2_json_url=$10, media_data=$11, tags=$12,
+           image_url=$13, published_at=$14, status=$15, ai_title=$16, ai_content=$17, ai_excerpt=$18,
+           ai_seo_keywords=$19, wp_post_id=$20, wp_site_id=$21, wp_permalink=$22, error_message=$23
+         WHERE id=$24`,
+        [
+          updated.sourceId,
+          updated.sourceName,
+          updated.originalTitle,
+          updated.originalContent,
+          updated.originalExcerpt || '',
+          updated.subtitle || null,
+          updated.author || null,
+          updated.cleanHtml || null,
+          updated.cleanText || null,
+          updated.r2JsonUrl || null,
+          updated.mediaData ? JSON.stringify(updated.mediaData) : null,
+          JSON.stringify(updated.tags || []),
+          updated.imageUrl || null,
+          updated.publishedAt || null,
+          updated.status,
+          updated.aiTitle || null,
+          updated.aiContent || null,
+          updated.aiExcerpt || null,
+          JSON.stringify(updated.aiSeoKeywords || []),
+          updated.wpPostId || null,
+          updated.wpSiteId || null,
+          updated.wpPermalink || null,
+          updated.errorMessage || null,
+          updated.id,
+        ]
       ).catch((err: any) => console.error('[PostgreSQL] Error updating captured article:', err.message));
+
+      this.pool.query(
+        `UPDATE captured_items SET
+           title=$1, subtitle=$2, author=$3, summary=$4, clean_content_html=$5, clean_content_text=$6,
+           status=$7, r2_json_url=$8, featured_image_url=$9, media_data=$10
+         WHERE id=$11`,
+        [
+          updated.originalTitle,
+          updated.subtitle || null,
+          updated.author || null,
+          updated.originalExcerpt || '',
+          updated.cleanHtml || null,
+          updated.cleanText || null,
+          updated.status,
+          updated.r2JsonUrl || null,
+          updated.imageUrl || null,
+          updated.mediaData ? JSON.stringify(updated.mediaData) : null,
+          updated.id,
+        ]
+      ).catch((err: any) => console.warn('[PostgreSQL] Error updating captured_items:', err.message));
     }
 
     return updated;

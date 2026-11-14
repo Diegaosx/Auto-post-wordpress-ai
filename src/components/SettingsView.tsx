@@ -16,6 +16,8 @@ import {
   Shield,
   Layers,
   Terminal,
+  Cloud,
+  ExternalLink,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -36,6 +38,14 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
   } | null>(null);
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [testingR2, setTestingR2] = useState(false);
+  const [r2TestResult, setR2TestResult] = useState<{
+    success: boolean;
+    message?: string;
+    endpoint?: string;
+    latencyMs?: number;
+    error?: string;
+  } | null>(null);
 
   const [form, setForm] = useState<SystemSettings>({
     platformName: 'Auto Post WordPress AI',
@@ -57,12 +67,19 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     autoRewriteArticles: true,
     autoPublishToWordPress: false,
     defaultRewriteTone: 'jornalistico',
+    r2AccountId: '',
+    r2AccessKeyId: '',
+    r2SecretAccessKey: '',
+    r2BucketName: 'cdn-imagens',
+    r2PublicUrl: 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br',
+    r2AutoSync: true,
   });
 
   const [hasKeys, setHasKeys] = useState({
     openRouter: false,
     gemini: false,
     llama: false,
+    r2: false,
   });
 
   useEffect(() => {
@@ -97,11 +114,18 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           autoRewriteArticles: data.autoRewriteArticles ?? true,
           autoPublishToWordPress: data.autoPublishToWordPress ?? false,
           defaultRewriteTone: data.defaultRewriteTone || 'jornalistico',
+          r2AccountId: data.r2AccountId || '',
+          r2AccessKeyId: data.r2AccessKeyId || '',
+          r2SecretAccessKey: '',
+          r2BucketName: data.r2BucketName || 'cdn-imagens',
+          r2PublicUrl: data.r2PublicUrl || 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br',
+          r2AutoSync: data.r2AutoSync ?? true,
         });
         setHasKeys({
           openRouter: Boolean(data.hasOpenRouterKey),
           gemini: Boolean(data.hasGeminiKey),
           llama: Boolean(data.hasLlamaKey),
+          r2: Boolean(data.hasR2Configured),
         });
       }
     } catch {
@@ -121,6 +145,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
       if (!payload.openRouterApiKey) delete payload.openRouterApiKey;
       if (!payload.geminiApiKey) delete payload.geminiApiKey;
       if (!payload.llamaApiKey) delete payload.llamaApiKey;
+      if (!payload.r2SecretAccessKey) delete payload.r2SecretAccessKey;
 
       const res = await fetch('/api/settings', {
         method: 'PUT',
@@ -148,6 +173,50 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
       setFeedback({ type: 'error', message: 'Erro de comunicação ao salvar.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestR2 = async () => {
+    setTestingR2(true);
+    setR2TestResult(null);
+
+    try {
+      const res = await fetch('/api/settings/r2/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          accountId: form.r2AccountId,
+          accessKeyId: form.r2AccessKeyId,
+          secretAccessKey: form.r2SecretAccessKey || undefined,
+          bucketName: form.r2BucketName,
+          publicUrl: form.r2PublicUrl,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setR2TestResult({
+          success: true,
+          message: data.message || 'Conexão com Cloudflare R2 bem-sucedida! Bucket e CDN operacionais.',
+          endpoint: data.endpoint,
+          latencyMs: data.latencyMs,
+        });
+      } else {
+        setR2TestResult({
+          success: false,
+          error: data.error || data.message || 'Falha na comunicação com o Cloudflare R2.',
+        });
+      }
+    } catch (err: any) {
+      setR2TestResult({
+        success: false,
+        error: err.message || 'Erro de rede ao testar Cloudflare R2.',
+      });
+    } finally {
+      setTestingR2(false);
     }
   };
 
@@ -763,6 +832,179 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                 <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
             </div>
+          </div>
+        </div>
+
+        {/* SEÇÃO 4: CLOUDFLARE R2 EDGE STORAGE & CDN */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-orange-500" />
+              <h2 className="text-sm font-semibold text-slate-900">Cloudflare R2 Edge Storage (CDN & Feeds JSON)</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              {hasKeys.r2 && (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> R2 Configurado
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="p-5 space-y-4">
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Os artigos capturados e os feeds são sincronizados como JSONs estáticos no Cloudflare R2 com taxa zero de saída (zero egress). Feeds agregados são automaticamente particionados em janelas de 6h no Fuso Horário de Recife (America/Recife UTC-3).
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Cloudflare Account ID
+                </label>
+                <input
+                  type="text"
+                  value={form.r2AccountId || ''}
+                  onChange={(e) => setForm({ ...form, r2AccountId: e.target.value })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-md font-mono"
+                  placeholder="4830cafc5dff5d7c50b8623b89b9b8c9"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Nome do Bucket R2
+                </label>
+                <input
+                  type="text"
+                  value={form.r2BucketName || ''}
+                  onChange={(e) => setForm({ ...form, r2BucketName: e.target.value })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-md font-mono"
+                  placeholder="cdn-imagens"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  R2 Access Key ID
+                </label>
+                <input
+                  type="text"
+                  value={form.r2AccessKeyId || ''}
+                  onChange={(e) => setForm({ ...form, r2AccessKeyId: e.target.value })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-md font-mono"
+                  placeholder="f60e9da5ad3f0eeabab24de5dc987edf"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1 flex items-center justify-between">
+                  <span>R2 Secret Access Key</span>
+                  {hasKeys.r2 && <span className="text-[10px] text-emerald-600 font-medium">Chave salva</span>}
+                </label>
+                <input
+                  type="password"
+                  value={form.r2SecretAccessKey || ''}
+                  onChange={(e) => setForm({ ...form, r2SecretAccessKey: e.target.value })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-md font-mono"
+                  placeholder={hasKeys.r2 ? '•••••••••••••••••••••••••••••••• (inalterada)' : 'Cole a secret key do R2'}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Domínio Público do CDN (Custom Domain associado ao Bucket)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={form.r2PublicUrl || ''}
+                  onChange={(e) => setForm({ ...form, r2PublicUrl: e.target.value })}
+                  className="flex-1 text-xs px-3 py-2 border border-slate-300 rounded-md font-mono"
+                  placeholder="https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br"
+                />
+                {form.r2PublicUrl && (
+                  <a
+                    href={form.r2PublicUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-md border border-slate-300 flex items-center gap-1.5 transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Abrir</span>
+                  </a>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Certifique-se de que este domínio está cadastrado como Custom Domain ativo no painel do Cloudflare R2 Settings para evitar erro 404.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between py-2 border-t border-slate-100">
+              <div>
+                <div className="text-xs font-semibold text-slate-900">Sincronização Automática com R2</div>
+                <div className="text-[11px] text-slate-500">
+                  Enviar automaticamente os artigos como JSON e atualizar feeds no CDN durante cada ciclo de scraping.
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.r2AutoSync}
+                  onChange={(e) => setForm({ ...form, r2AutoSync: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
+              </label>
+            </div>
+
+            {/* Botão de Teste R2 */}
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500">
+                Gera um objeto de teste no bucket e valida a leitura pelo CDN público.
+              </span>
+              <button
+                type="button"
+                onClick={handleTestR2}
+                disabled={testingR2}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 text-xs font-medium rounded-md transition-colors disabled:opacity-60 cursor-pointer"
+              >
+                {testingR2 ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5" />}
+                <span>{testingR2 ? 'Testando Conexão...' : 'Testar Conexão R2'}</span>
+              </button>
+            </div>
+
+            {/* Resultado do Teste R2 */}
+            {r2TestResult && (
+              <div
+                className={`p-3 rounded-lg text-xs ${
+                  r2TestResult.success
+                    ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                    : 'bg-rose-50 text-rose-900 border border-rose-200'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-semibold mb-1">
+                  {r2TestResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600" />
+                  )}
+                  <span>{r2TestResult.success ? 'Conexão Cloudflare R2 Concluída com Sucesso' : 'Falha na Conexão com R2'}</span>
+                </div>
+                {r2TestResult.message && <p className="text-[11px] mt-0.5">{r2TestResult.message}</p>}
+                {r2TestResult.endpoint && (
+                  <p className="text-[10px] font-mono mt-1 text-slate-600">Endpoint: {r2TestResult.endpoint}</p>
+                )}
+                {r2TestResult.latencyMs && (
+                  <p className="text-[10px] font-mono text-slate-600">Latência: {r2TestResult.latencyMs}ms</p>
+                )}
+                {r2TestResult.error && (
+                  <p className="text-[11px] font-mono text-rose-700 mt-1 whitespace-pre-wrap">{r2TestResult.error}</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

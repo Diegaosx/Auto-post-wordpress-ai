@@ -48,6 +48,7 @@ COPY --from=builder /app/dist ./dist
 # Copy server entrypoint, TypeScript source, config and assets
 COPY server.ts tsconfig.json ./
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 COPY wordpress-plugin/ ./wordpress-plugin/
 
 # Create persistent data directory and set node user ownership
