@@ -88,105 +88,126 @@ export async function scrapeSource(sourceId: string): Promise<{
   const capturedList: CapturedArticle[] = [];
   let newCount = 0;
 
-  for (const item of items.slice(0, 15)) {
-    const link = item.link?.trim();
-    const title = item.title?.trim();
-    if (!link || !title) continue;
+  if (items.length === 0) {
+    return {
+      source,
+      totalFound: 0,
+      newCaptured: 0,
+      articles: [],
+    };
+  }
 
-    // Verificar se artigo já existe
-    if (dbRepo.checkArticleUrlExists(link)) {
-      continue;
-    }
+  // Capturar EXCLUSIVAMENTE a última matéria (a mais recente do portal/feed)
+  const latestItem = items[0];
+  const initialLink = latestItem.link?.trim();
+  const initialTitle = latestItem.title?.trim();
 
-    // Extrair imagem inicial
-    let imgUrl: string | null = null;
-    if (item.enclosure?.url) {
-      imgUrl = item.enclosure.url;
-    } else if (item.mediaContent?.$?.url) {
-      imgUrl = item.mediaContent.$.url;
-    } else if (item.mediaThumbnail?.$?.url) {
-      imgUrl = item.mediaThumbnail.$.url;
+  if (initialLink && initialTitle) {
+    // 1. Verificação prévia de duplicação: se a última matéria já foi salva, ignora e nunca duplica
+    if (dbRepo.checkArticleUrlExists(initialLink)) {
+      console.log(`[Scraper] Última matéria já capturada anteriormente (${initialLink}). Nenhuma duplicação gerada.`);
     } else {
-      imgUrl = extractImageUrlFromHtml(item.content || '');
-    }
-
-    // 1. Extração profunda com DOM/Cheerio (Arquitetura painel-agy)
-    let extracted: any = null;
-    try {
-      extracted = await extractArticle(link);
-    } catch (e: any) {
-      console.warn(`[Scraper] Extração profunda falhou para ${link}, usando dados do feed:`, e.message);
-    }
-
-    const finalUrl = extracted?.canonical_url || link;
-    if (finalUrl !== link && dbRepo.checkArticleUrlExists(finalUrl)) {
-      continue;
-    }
-
-    const finalTitle = extracted?.title || title;
-    const finalSubtitle = extracted?.subtitle || undefined;
-    const finalAuthor = extracted?.author || undefined;
-    const finalCleanHtml = extracted?.clean_content_html || undefined;
-    const finalCleanText = extracted?.clean_content_text || undefined;
-    const finalExcerpt = extracted?.summary || (item.contentSnippet ? cleanHtmlTags(item.contentSnippet).slice(0, 250) : '');
-    const finalImage = extracted?.featured_image_url || imgUrl;
-    const finalMediaData = extracted?.media_data || undefined;
-    const finalTags = extracted?.tags && extracted.tags.length > 0 ? extracted.tags : [];
-    const rawContent = finalCleanHtml || item.content || item.contentSnippet || finalTitle;
-
-    let newArticle = dbRepo.createCapturedArticle({
-      sourceId: source.id,
-      sourceName: source.name,
-      originalUrl: finalUrl,
-      originalTitle: finalTitle,
-      originalContent: rawContent,
-      originalExcerpt: finalExcerpt,
-      subtitle: finalSubtitle,
-      author: finalAuthor,
-      cleanHtml: finalCleanHtml,
-      cleanText: finalCleanText,
-      imageUrl: finalImage,
-      mediaData: finalMediaData,
-      tags: finalTags,
-      publishedAt: extracted?.published_at || (item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString()),
-      status: 'pending',
-      aiTitle: null,
-      aiContent: null,
-      aiExcerpt: null,
-      aiSeoKeywords: [],
-      wpPostId: null,
-      wpSiteId: null,
-      wpPermalink: null,
-    });
-
-    // 2. Upload para Cloudflare R2 Edge Storage
-    const settings = dbRepo.getSystemSettings();
-    if (settings.r2AutoSync !== false) {
-      try {
-        const r2Url = await uploadArticleJson(newArticle);
-        if (r2Url) {
-          newArticle = dbRepo.updateCapturedArticle(newArticle.id, { r2JsonUrl: r2Url }) || newArticle;
-        }
-      } catch (r2Err: any) {
-        console.warn(`[Scraper] Erro ao sincronizar artigo ${newArticle.id} no R2:`, r2Err.message);
+      // Extrair imagem inicial de fallback
+      let imgUrl: string | null = null;
+      if (latestItem.enclosure?.url) {
+        imgUrl = latestItem.enclosure.url;
+      } else if (latestItem.mediaContent?.$?.url) {
+        imgUrl = latestItem.mediaContent.$.url;
+      } else if (latestItem.mediaThumbnail?.$?.url) {
+        imgUrl = latestItem.mediaThumbnail.$.url;
+      } else {
+        imgUrl = extractImageUrlFromHtml(latestItem.content || '');
       }
-    }
 
-    newCount++;
-    capturedList.push(newArticle);
-
-    // 3. Auto-reescrever com IA se configurado na fonte
-    if (source.autoRewrite) {
+      // 2. Extração profunda com DOM/Cheerio (Arquitetura painel-agy)
+      let extracted: any = null;
       try {
-        const rewritten = await rewriteArticleWithAi(newArticle.id, {
-          targetSiteId: source.targetSiteId || undefined,
-          autoPublish: source.autoPublish,
+        extracted = await extractArticle(initialLink);
+      } catch (e: any) {
+        console.warn(`[Scraper] Extração profunda falhou para ${initialLink}, usando dados do feed:`, e.message);
+      }
+
+      const finalUrl = extracted?.url || extracted?.canonicalUrl || initialLink;
+      if (finalUrl !== initialLink && dbRepo.checkArticleUrlExists(finalUrl)) {
+        console.log(`[Scraper] URL canônica da última matéria já existe (${finalUrl}). Ignorando duplicação.`);
+      } else {
+        const finalTitle = extracted?.title || initialTitle;
+        const finalSubtitle = extracted?.subtitle || undefined;
+        const finalAuthor = extracted?.author || undefined;
+        const finalCleanHtml = extracted?.cleanHtml || undefined;
+        const finalCleanText = extracted?.cleanText || undefined;
+        const finalExcerpt =
+          (extracted?.paragraphs && extracted.paragraphs.length > 0 ? extracted.paragraphs[0] : '') ||
+          (latestItem.contentSnippet ? cleanHtmlTags(latestItem.contentSnippet).slice(0, 250) : '');
+        // Foto de destaque real extraída do DOM/Cheerio ou fallback do feed
+        const finalImage = extracted?.featuredImage?.url || imgUrl;
+        const finalMediaData = extracted
+          ? {
+              featuredImage: extracted.featuredImage,
+              internalImages: extracted.internalImages,
+              videos: extracted.videos,
+            }
+          : undefined;
+        const finalTags = extracted?.tags && extracted.tags.length > 0 ? extracted.tags : [];
+        const rawContent = finalCleanHtml || latestItem.content || latestItem.contentSnippet || finalTitle;
+
+        let newArticle = dbRepo.createCapturedArticle({
+          sourceId: source.id,
+          sourceName: source.name,
+          originalUrl: finalUrl,
+          originalTitle: finalTitle,
+          originalContent: rawContent,
+          originalExcerpt: finalExcerpt,
+          subtitle: finalSubtitle,
+          author: finalAuthor,
+          cleanHtml: finalCleanHtml,
+          cleanText: finalCleanText,
+          imageUrl: finalImage,
+          mediaData: finalMediaData,
+          tags: finalTags,
+          publishedAt:
+            extracted?.publishedAt ||
+            (latestItem.pubDate ? new Date(latestItem.pubDate).toISOString() : new Date().toISOString()),
+          status: 'pending',
+          aiTitle: null,
+          aiContent: null,
+          aiExcerpt: null,
+          aiSeoKeywords: [],
+          wpPostId: null,
+          wpSiteId: null,
+          wpPermalink: null,
         });
-        if (rewritten) {
-          newArticle = rewritten;
+
+        // 3. Upload para Cloudflare R2 Edge Storage
+        const settings = dbRepo.getSystemSettings();
+        if (settings.r2AutoSync !== false) {
+          try {
+            const r2Url = await uploadArticleJson(newArticle);
+            if (r2Url) {
+              newArticle = dbRepo.updateCapturedArticle(newArticle.id, { r2JsonUrl: r2Url }) || newArticle;
+            }
+          } catch (r2Err: any) {
+            console.warn(`[Scraper] Erro ao sincronizar artigo ${newArticle.id} no R2:`, r2Err.message);
+          }
         }
-      } catch (aiErr) {
-        console.error(`[Scraper] Falha ao auto-reescrever artigo ${newArticle.id}:`, aiErr);
+
+        newCount++;
+        capturedList.push(newArticle);
+
+        // 4. Auto-reescrever com IA se configurado na fonte
+        if (source.autoRewrite) {
+          try {
+            const rewritten = await rewriteArticleWithAi(newArticle.id, {
+              targetSiteId: source.targetSiteId || undefined,
+              autoPublish: source.autoPublish,
+            });
+            if (rewritten) {
+              newArticle = rewritten;
+            }
+          } catch (aiErr) {
+            console.error(`[Scraper] Falha ao auto-reescrever artigo ${newArticle.id}:`, aiErr);
+          }
+        }
       }
     }
   }

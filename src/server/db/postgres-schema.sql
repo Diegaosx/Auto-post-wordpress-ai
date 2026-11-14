@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS news_sources (
   active BOOLEAN NOT NULL DEFAULT true,
   auto_rewrite BOOLEAN NOT NULL DEFAULT false,
   auto_publish BOOLEAN NOT NULL DEFAULT false,
+  interval_minutes INTEGER NOT NULL DEFAULT 15,
   last_scraped_at TIMESTAMPTZ,
   articles_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

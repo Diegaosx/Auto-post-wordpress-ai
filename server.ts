@@ -606,6 +606,26 @@ async function startServer() {
   // ==========================================================================
   // 7. SELF PROFILE ROUTES (ADMIN & CLIENT — ISOLATED TO OWN ACCOUNT)
   // ==========================================================================
+  app.get('/api/profile', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.auth!.sub;
+    const user = dbRepo.findUserById(userId);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json({ user });
+  });
+
+  app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.auth!.sub;
+    const user = dbRepo.findUserById(userId);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json({ user });
+  });
+
   app.patch('/api/profile', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const start = Date.now();
     const userId = req.auth!.sub;
@@ -1088,7 +1108,7 @@ async function startServer() {
 
   // Create News Source
   app.post('/api/scraper/sources', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const { name, url, type, category, targetSiteId, autoRewrite, autoPublish } = req.body || {};
+    const { name, url, type, category, targetSiteId, autoRewrite, autoPublish, intervalMinutes } = req.body || {};
 
     if (!name || !url) {
       res.status(400).json({ error: 'Nome e URL da fonte são obrigatórios.' });
@@ -1105,6 +1125,7 @@ async function startServer() {
       active: true,
       autoRewrite: Boolean(autoRewrite),
       autoPublish: Boolean(autoPublish),
+      intervalMinutes: Number(intervalMinutes) > 0 ? Number(intervalMinutes) : 15,
       lastScrapedAt: null,
       articlesCount: 0,
     });
@@ -1364,26 +1385,32 @@ async function startServer() {
   app.listen(env.PORT, '0.0.0.0', () => {
     console.log(`Auto Post WordPress AI platform listening on http://0.0.0.0:${env.PORT}`);
 
-    // Background Autonomous Scraping Loop (Railway / Continuous Server)
-    const intervalMinutes = env.COLLECTOR_INTERVAL_MINUTES || 5;
-    console.log(`[Collector Background] Agendador automático configurado para cada ${intervalMinutes} minutos.`);
+    // Background Autonomous Scraping Loop (Cadência por frequência individual de cada fonte)
+    console.log(`[Collector Background] Agendador automático por frequência ativado (verificação a cada 60s).`);
 
     setInterval(async () => {
       try {
         const sources = dbRepo.getNewsSources().filter((s) => s.active);
         if (sources.length === 0) return;
-        console.log(`[Collector Background] Iniciando ciclo para ${sources.length} fontes ativas...`);
+        const now = Date.now();
+
         for (const s of sources) {
-          try {
-            await scrapeSource(s.id);
-          } catch (err: any) {
-            console.warn(`[Collector Background] Erro ao coletar fonte "${s.name}" (${s.id}):`, err.message);
+          const freqMs = (s.intervalMinutes || 15) * 60 * 1000;
+          const lastTime = s.lastScrapedAt ? new Date(s.lastScrapedAt).getTime() : 0;
+
+          if (now - lastTime >= freqMs) {
+            console.log(`[Collector Background] Coleta agendada iniciada para "${s.name}" (a cada ${s.intervalMinutes || 15} min)...`);
+            try {
+              await scrapeSource(s.id);
+            } catch (err: any) {
+              console.warn(`[Collector Background] Erro ao coletar fonte "${s.name}" (${s.id}):`, err.message);
+            }
           }
         }
       } catch (cycleErr: any) {
         console.error('[Collector Background] Erro no ciclo de coleta:', cycleErr.message);
       }
-    }, intervalMinutes * 60 * 1000);
+    }, 60 * 1000);
   });
 }
 

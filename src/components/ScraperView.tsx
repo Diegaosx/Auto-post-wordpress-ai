@@ -57,8 +57,7 @@ export function ScraperView({ token }: ScraperViewProps) {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceCategory, setSourceCategory] = useState('Tecnologia');
   const [sourceTargetSite, setSourceTargetSite] = useState('');
-  const [sourceAutoRewrite, setSourceAutoRewrite] = useState(true);
-  const [sourceAutoPublish, setSourceAutoPublish] = useState(false);
+  const [sourceIntervalMinutes, setSourceIntervalMinutes] = useState(15);
   const [submittingSource, setSubmittingSource] = useState(false);
 
   const fetchData = async () => {
@@ -284,8 +283,9 @@ export function ScraperView({ token }: ScraperViewProps) {
           url: sourceUrl,
           category: sourceCategory,
           targetSiteId: sourceTargetSite || null,
-          autoRewrite: sourceAutoRewrite,
-          autoPublish: sourceAutoPublish,
+          intervalMinutes: Number(sourceIntervalMinutes) || 15,
+          autoRewrite: false,
+          autoPublish: false,
         }),
       });
 
@@ -471,8 +471,9 @@ export function ScraperView({ token }: ScraperViewProps) {
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between">
-                  <span className="text-[11px] text-slate-500">
-                    {src.autoRewrite ? '✨ Auto-IA ativado' : 'Manual'}
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+                    <Clock className="w-3 h-3 text-slate-500" />
+                    A cada {src.intervalMinutes || 15} min
                   </span>
                   <button
                     onClick={() => handleRunScrape(src.id)}
@@ -817,30 +818,27 @@ export function ScraperView({ token }: ScraperViewProps) {
                 </div>
               </div>
 
-              <div className="space-y-2 pt-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={sourceAutoRewrite}
-                    onChange={(e) => setSourceAutoRewrite(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="text-xs text-slate-700 font-medium">
-                    Reescrever automaticamente com IA ao capturar
-                  </span>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Frequência de Captura Automática
                 </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={sourceAutoPublish}
-                    onChange={(e) => setSourceAutoPublish(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="text-xs text-slate-700 font-medium">
-                    Publicar automaticamente no WordPress após reescrita
-                  </span>
-                </label>
+                <select
+                  value={sourceIntervalMinutes}
+                  onChange={(e) => setSourceIntervalMinutes(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                >
+                  <option value={5}>A cada 5 minutos (Mais frequente)</option>
+                  <option value={15}>A cada 15 minutos (Recomendado)</option>
+                  <option value={30}>A cada 30 minutos</option>
+                  <option value={60}>A cada 1 hora</option>
+                  <option value={120}>A cada 2 horas</option>
+                  <option value={360}>A cada 6 horas</option>
+                  <option value={720}>A cada 12 horas</option>
+                  <option value={1440}>A cada 24 horas (Diário)</option>
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  O coletor monitora este portal continuamente e extrai exclusivamente o artigo mais recente, ignorando matérias já capturadas.
+                </p>
               </div>
 
               <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">

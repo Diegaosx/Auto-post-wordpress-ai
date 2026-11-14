@@ -307,122 +307,126 @@ async function processSource(source) {
 
   const rawItems = channel.item || channel.entry || [];
   const items = Array.isArray(rawItems) ? rawItems : [rawItems];
+  if (items.length === 0) return 0;
+
   let capturedCount = 0;
+  // Capturar EXCLUSIVAMENTE a última matéria (a mais recente do portal/feed)
+  const item = items[0];
+  let link = item.link;
+  if (typeof link === 'object' && link['@_href']) link = link['@_href'];
+  const title = item.title ? (typeof item.title === 'string' ? item.title : item.title['#text']) : '';
+  if (!link || !title) return 0;
 
-  for (const item of items.slice(0, 10)) {
-    let link = item.link;
-    if (typeof link === 'object' && link['@_href']) link = link['@_href'];
-    const title = item.title ? (typeof item.title === 'string' ? item.title : item.title['#text']) : '';
-    if (!link || !title) continue;
+  const targetUrl = cleanUrl(String(link).trim());
+  const hashId = generateHash(targetUrl);
 
-    const targetUrl = cleanUrl(String(link).trim());
-    const hashId = generateHash(targetUrl);
-
-    // Verifica se já foi capturado
-    if (pool) {
-      const existsRes = await pool.query(
-        'SELECT id FROM captured_items WHERE id = $1 UNION SELECT id FROM captured_articles WHERE original_url = $2',
-        [hashId, targetUrl]
-      );
-      if (existsRes.rows.length > 0) continue;
+  // Verifica se a última matéria já foi capturada (ignora e nunca duplica)
+  if (pool) {
+    const existsRes = await pool.query(
+      'SELECT id FROM captured_items WHERE id = $1 UNION SELECT id FROM captured_articles WHERE original_url = $2',
+      [hashId, targetUrl]
+    );
+    if (existsRes.rows.length > 0) {
+      console.log(`[Collector Daemon] Última matéria já capturada (${targetUrl}). Nenhuma duplicação gerada.`);
+      return 0;
     }
-
-    // Extração profunda com Cheerio
-    const extracted = await extractArticle(targetUrl);
-    const finalTitle = extracted.title || title;
-    const cleanHtml = extracted.cleanContentHtml || item.description || title;
-    const cleanText = extracted.cleanContentText || extracted.summary;
-    const featuredImage = extracted.featuredImageUrl || null;
-    const recifeInfo = getRecifeDateInfo();
-
-    const articlePayload = {
-      id: hashId,
-      source_id: source.id,
-      source_name: source.name,
-      category: source.category || 'Geral',
-      title: finalTitle,
-      subtitle: extracted.subtitle,
-      author: extracted.author,
-      url: targetUrl,
-      summary: extracted.summary,
-      clean_content_html: cleanHtml,
-      clean_content_text: cleanText,
-      published_at: recifeInfo.recifeIso,
-      captured_at: new Date().toISOString(),
-      recife_date: recifeInfo.date,
-      recife_slot: recifeInfo.slot,
-      status: 'new',
-      featured_image_url: featuredImage,
-    };
-
-    // 1. Upload individual para Cloudflare R2
-    let r2Url = null;
-    try {
-      r2Url = await uploadJsonToR2(`artigos/${hashId}.json`, articlePayload, 86400);
-      articlePayload.r2_json_url = r2Url;
-    } catch (r2Err) {
-      console.warn(`[Collector Daemon] Falha ao enviar para R2: ${r2Err.message}`);
-    }
-
-    // 2. Persistir no PostgreSQL (ambas tabelas)
-    if (pool) {
-      try {
-        await pool.query(
-          `INSERT INTO captured_items (
-             id, source_id, source_name, category, title, subtitle, author, url, summary,
-             clean_content_html, clean_content_text, published_at, captured_at, status, r2_json_url, featured_image_url
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, $14, $15)
-           ON CONFLICT (id) DO NOTHING`,
-          [
-            hashId,
-            source.id,
-            source.name,
-            source.category || 'Geral',
-            finalTitle,
-            extracted.subtitle,
-            extracted.author,
-            targetUrl,
-            extracted.summary,
-            cleanHtml,
-            cleanText,
-            recifeInfo.recifeIso,
-            'new',
-            r2Url,
-            featuredImage,
-          ]
-        );
-
-        await pool.query(
-          `INSERT INTO captured_articles (
-             id, source_id, source_name, original_url, original_title, original_content, original_excerpt,
-             subtitle, author, clean_html, clean_text, r2_json_url, image_url, status, created_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
-           ON CONFLICT (original_url) DO NOTHING`,
-          [
-            hashId,
-            source.id,
-            source.name,
-            targetUrl,
-            finalTitle,
-            cleanHtml,
-            extracted.summary,
-            extracted.subtitle,
-            extracted.author,
-            cleanHtml,
-            cleanText,
-            r2Url,
-            featuredImage,
-            'pending',
-          ]
-        );
-      } catch (dbErr) {
-        console.error('[Collector Daemon] Erro salvando no DB:', dbErr.message);
-      }
-    }
-
-    capturedCount++;
-    console.log(`[Collector Daemon] [+] Artigo capturado: "${finalTitle}" -> R2: ${r2Url || 'local'}`);
   }
+
+  // Extração profunda com Cheerio
+  const extracted = await extractArticle(targetUrl);
+  const finalTitle = extracted.title || title;
+  const cleanHtml = extracted.cleanContentHtml || item.description || title;
+  const cleanText = extracted.cleanContentText || extracted.summary;
+  const featuredImage = extracted.featuredImageUrl || null;
+  const recifeInfo = getRecifeDateInfo();
+
+  const articlePayload = {
+    id: hashId,
+    source_id: source.id,
+    source_name: source.name,
+    category: source.category || 'Geral',
+    title: finalTitle,
+    subtitle: extracted.subtitle,
+    author: extracted.author,
+    url: targetUrl,
+    summary: extracted.summary,
+    clean_content_html: cleanHtml,
+    clean_content_text: cleanText,
+    published_at: recifeInfo.recifeIso,
+    captured_at: new Date().toISOString(),
+    recife_date: recifeInfo.date,
+    recife_slot: recifeInfo.slot,
+    status: 'new',
+    featured_image_url: featuredImage,
+  };
+
+  // 1. Upload individual para Cloudflare R2
+  let r2Url = null;
+  try {
+    r2Url = await uploadJsonToR2(`artigos/${hashId}.json`, articlePayload, 86400);
+    articlePayload.r2_json_url = r2Url;
+  } catch (r2Err) {
+    console.warn(`[Collector Daemon] Falha ao enviar para R2: ${r2Err.message}`);
+  }
+
+  // 2. Persistir no PostgreSQL (ambas tabelas)
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO captured_items (
+           id, source_id, source_name, category, title, subtitle, author, url, summary,
+           clean_content_html, clean_content_text, published_at, captured_at, status, r2_json_url, featured_image_url
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, $14, $15)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          hashId,
+          source.id,
+          source.name,
+          source.category || 'Geral',
+          finalTitle,
+          extracted.subtitle,
+          extracted.author,
+          targetUrl,
+          extracted.summary,
+          cleanHtml,
+          cleanText,
+          recifeInfo.recifeIso,
+          'new',
+          r2Url,
+          featuredImage,
+        ]
+      );
+
+      await pool.query(
+        `INSERT INTO captured_articles (
+           id, source_id, source_name, original_url, original_title, original_content, original_excerpt,
+           subtitle, author, clean_html, clean_text, r2_json_url, image_url, status, created_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+         ON CONFLICT (original_url) DO NOTHING`,
+        [
+          hashId,
+          source.id,
+          source.name,
+          targetUrl,
+          finalTitle,
+          cleanHtml,
+          extracted.summary,
+          extracted.subtitle,
+          extracted.author,
+          cleanHtml,
+          cleanText,
+          r2Url,
+          featuredImage,
+          'pending',
+        ]
+      );
+    } catch (dbErr) {
+      console.error('[Collector Daemon] Erro salvando no DB:', dbErr.message);
+    }
+  }
+
+  capturedCount++;
+  console.log(`[Collector Daemon] [+] Artigo capturado: "${finalTitle}" -> R2: ${r2Url || 'local'}`);
 
   return capturedCount;
 }

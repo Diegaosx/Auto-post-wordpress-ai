@@ -19,8 +19,24 @@ type ActiveTab = 'dashboard' | 'scraper' | 'wordpress' | 'users' | 'profile' | '
 
 export default function App() {
   const [locale, setLocale] = useState<Locale>('pt-BR');
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('kore_auth_token') || null;
+    } catch {
+      return null;
+    }
+  });
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const stored = localStorage.getItem('kore_auth_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [validatingSession, setValidatingSession] = useState<boolean>(() => {
+    return Boolean(localStorage.getItem('kore_auth_token'));
+  });
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [branding, setBranding] = useState<PublicBrandingSettings>({
@@ -37,6 +53,48 @@ export default function App() {
     document.documentElement.lang = locale;
   }, [locale]);
 
+  // Restaura e valida sessão persistente ao atualizar a página (F5)
+  useEffect(() => {
+    const savedToken = localStorage.getItem('kore_auth_token');
+    if (!savedToken) {
+      setValidatingSession(false);
+      return;
+    }
+
+    fetch('/api/profile', {
+      headers: { Authorization: `Bearer ${savedToken}` },
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.user) {
+            setUser(data.user);
+            setToken(savedToken);
+            if (data.user.locale) {
+              setLocale(data.user.locale);
+            }
+            try {
+              localStorage.setItem('kore_auth_user', JSON.stringify(data.user));
+            } catch {}
+          }
+        } else {
+          // Token expirado ou revogado
+          try {
+            localStorage.removeItem('kore_auth_token');
+            localStorage.removeItem('kore_auth_user');
+          } catch {}
+          setToken(null);
+          setUser(null);
+        }
+      })
+      .catch(() => {
+        // Mantém sessão local se offline ou temporariamente inacessível
+      })
+      .finally(() => {
+        setValidatingSession(false);
+      });
+  }, []);
+
   useEffect(() => {
     fetch('/api/settings/public')
       .then((r) => r.json())
@@ -50,6 +108,10 @@ export default function App() {
   }, []);
 
   const handleAuthSuccess = (newToken: string, loggedUser: User) => {
+    try {
+      localStorage.setItem('kore_auth_token', newToken);
+      localStorage.setItem('kore_auth_user', JSON.stringify(loggedUser));
+    } catch {}
     setToken(newToken);
     setUser(loggedUser);
     if (loggedUser.locale) {
@@ -60,6 +122,10 @@ export default function App() {
   };
 
   const handleSignOut = () => {
+    try {
+      localStorage.removeItem('kore_auth_token');
+      localStorage.removeItem('kore_auth_user');
+    } catch {}
     setToken(null);
     setUser(null);
     setActiveTab('dashboard');
@@ -70,6 +136,17 @@ export default function App() {
     setActiveTab(tab);
     setMobileMenuOpen(false);
   };
+
+  if (validatingSession && !user) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-xs font-medium text-slate-500">Restaurando sessão...</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!token || !user) {
     return (

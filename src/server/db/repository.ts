@@ -217,6 +217,7 @@ class PostgresRepository {
       active: r.active,
       autoRewrite: r.auto_rewrite,
       autoPublish: r.auto_publish,
+      intervalMinutes: r.interval_minutes || 15,
       lastScrapedAt: r.last_scraped_at ? new Date(r.last_scraped_at).toISOString() : null,
       articlesCount: r.articles_count || 0,
       createdAt: new Date(r.created_at).toISOString(),
@@ -796,6 +797,7 @@ class PostgresRepository {
     const source: NewsSource = {
       ...data,
       id: `src_${crypto.randomBytes(6).toString('hex')}`,
+      intervalMinutes: data.intervalMinutes || 15,
       createdAt: now,
     };
     this.state.newsSources.unshift(source);
@@ -803,16 +805,16 @@ class PostgresRepository {
 
     if (this.pool) {
       this.pool.query(
-        `INSERT INTO news_sources (id, user_id, name, url, type, category, target_site_id, active, auto_rewrite, auto_publish, last_scraped_at, articles_count, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-        [source.id, source.userId, source.name, source.url, source.type, source.category, source.targetSiteId || null, source.active, source.autoRewrite, source.autoPublish, source.lastScrapedAt || null, source.articlesCount || 0, source.createdAt]
+        `INSERT INTO news_sources (id, user_id, name, url, type, category, target_site_id, active, auto_rewrite, auto_publish, interval_minutes, last_scraped_at, articles_count, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        [source.id, source.userId, source.name, source.url, source.type, source.category, source.targetSiteId || null, source.active, source.autoRewrite, source.autoPublish, source.intervalMinutes, source.lastScrapedAt || null, source.articlesCount || 0, source.createdAt]
       ).catch((err: any) => console.error('[PostgreSQL] Error inserting news source:', err.message));
 
       this.pool.query(
         `INSERT INTO sources (id, name, type, url, category, interval_seconds, auto_publish, is_active, created_at)
-         VALUES ($1, $2, $3, $4, $5, 300, $6, $7, $8)
-         ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, url=EXCLUDED.url, type=EXCLUDED.type, category=EXCLUDED.category, auto_publish=EXCLUDED.auto_publish, is_active=EXCLUDED.is_active`,
-        [source.id, source.name, source.type, source.url, source.category, source.autoPublish ? 1 : 0, source.active ? 1 : 0, source.createdAt]
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, url=EXCLUDED.url, type=EXCLUDED.type, category=EXCLUDED.category, interval_seconds=EXCLUDED.interval_seconds, auto_publish=EXCLUDED.auto_publish, is_active=EXCLUDED.is_active`,
+        [source.id, source.name, source.type, source.url, source.category, (source.intervalMinutes || 15) * 60, source.autoPublish ? 1 : 0, source.active ? 1 : 0, source.createdAt]
       ).catch((err: any) => console.warn('[PostgreSQL] Error mirroring to sources table:', err.message));
     }
 
@@ -832,8 +834,8 @@ class PostgresRepository {
 
     if (this.pool) {
       this.pool.query(
-        `UPDATE news_sources SET name=$1, url=$2, type=$3, category=$4, target_site_id=$5, active=$6, auto_rewrite=$7, auto_publish=$8, last_scraped_at=$9, articles_count=$10 WHERE id=$11`,
-        [updated.name, updated.url, updated.type, updated.category, updated.targetSiteId || null, updated.active, updated.autoRewrite, updated.autoPublish, updated.lastScrapedAt || null, updated.articlesCount || 0, updated.id]
+        `UPDATE news_sources SET name=$1, url=$2, type=$3, category=$4, target_site_id=$5, active=$6, auto_rewrite=$7, auto_publish=$8, interval_minutes=$9, last_scraped_at=$10, articles_count=$11 WHERE id=$12`,
+        [updated.name, updated.url, updated.type, updated.category, updated.targetSiteId || null, updated.active, updated.autoRewrite, updated.autoPublish, updated.intervalMinutes || 15, updated.lastScrapedAt || null, updated.articlesCount || 0, updated.id]
       ).catch((err: any) => console.error('[PostgreSQL] Error updating news source:', err.message));
     }
 

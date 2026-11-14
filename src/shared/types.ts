@@ -164,6 +164,7 @@ export interface NewsSource {
   active: boolean;
   autoRewrite: boolean;
   autoPublish: boolean;
+  intervalMinutes: number;
   lastScrapedAt: string | null;
   articlesCount?: number;
   createdAt: string;
