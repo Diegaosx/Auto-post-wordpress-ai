@@ -135,6 +135,9 @@ export interface WordPressSite {
   autoPublish: boolean;
   defaultStatus: 'draft' | 'publish';
   defaultCategory: string | null;
+  aiProvider?: LLMProviderId;
+  aiModel?: string;
+  aiTone?: 'jornalistico' | 'persuasivo' | 'analitico' | 'didatico';
   createdAt: string;
   updatedAt: string;
 }
@@ -195,4 +198,40 @@ export interface ArticleRewriteOptions {
   targetSiteId?: string;
   autoPublish?: boolean;
 }
+
+export interface SystemSettings {
+  // 1. Branding & White-label
+  platformName: string;
+  platformTagline: string;
+  browserTitle: string;
+  logoText: string;
+  logoUrl?: string;
+
+  // 2. Motor de IA (AI Engine)
+  aiProvider: LLMProviderId;
+  openRouterApiKey?: string;
+  openRouterModel: string;
+  openRouterBaseUrl?: string;
+
+  geminiApiKey?: string;
+  geminiModel: string;
+
+  llamaApiKey?: string;
+  llamaBaseUrl?: string;
+  llamaModel?: string;
+
+  aiTemperature: number;
+  aiSystemPrompt: string;
+
+  // 3. Automação padrão
+  autoRewriteArticles: boolean;
+  autoPublishToWordPress: boolean;
+  defaultRewriteTone: 'jornalistico' | 'persuasivo' | 'analitico' | 'didatico';
+}
+
+export type PublicBrandingSettings = Pick<
+  SystemSettings,
+  'platformName' | 'platformTagline' | 'browserTitle' | 'logoText' | 'logoUrl'
+>;
+
 

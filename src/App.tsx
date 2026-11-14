@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Locale, User, UserRole } from './shared/types';
+import { Locale, User, UserRole, PublicBrandingSettings } from './shared/types';
 import { translations } from './shared/i18n';
 import { AuthSplitScreen } from './components/AuthSplitScreen';
 import { DashboardView } from './components/DashboardView';
@@ -12,9 +12,10 @@ import { UsersManagementView } from './components/UsersManagementView';
 import { ProfileView } from './components/ProfileView';
 import { ScraperView } from './components/ScraperView';
 import { WordPressSitesView } from './components/WordPressSitesView';
-import { LayoutDashboard, Newspaper, Globe, Users, UserCircle, LogOut, Menu, X } from 'lucide-react';
+import { SettingsView } from './components/SettingsView';
+import { LayoutDashboard, Newspaper, Globe, Users, UserCircle, Settings, LogOut, Menu, X } from 'lucide-react';
 
-type ActiveTab = 'dashboard' | 'scraper' | 'wordpress' | 'users' | 'profile';
+type ActiveTab = 'dashboard' | 'scraper' | 'wordpress' | 'users' | 'profile' | 'settings';
 
 export default function App() {
   const [locale, setLocale] = useState<Locale>('pt-BR');
@@ -22,12 +23,31 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [branding, setBranding] = useState<PublicBrandingSettings>({
+    platformName: 'Auto Post WordPress AI',
+    platformTagline: 'Automação editorial com IA e sincronização WordPress',
+    browserTitle: 'Auto Post WordPress AI — Painel Editorial',
+    logoText: 'AP',
+    logoUrl: '',
+  });
 
   const t = translations[locale];
 
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
+
+  useEffect(() => {
+    fetch('/api/settings/public')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data.platformName) {
+          setBranding(data);
+          document.title = data.browserTitle || `${data.platformName} — Painel Editorial`;
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleAuthSuccess = (newToken: string, loggedUser: User) => {
     setToken(newToken);
@@ -57,12 +77,13 @@ export default function App() {
         locale={locale}
         onLocaleChange={setLocale}
         onAuthSuccess={handleAuthSuccess}
+        branding={branding}
       />
     );
   }
 
   const isAdmin = user.role === UserRole.ADMIN;
-  const effectiveTab: ActiveTab = !isAdmin && activeTab === 'users' ? 'dashboard' : activeTab;
+  const effectiveTab: ActiveTab = !isAdmin && (activeTab === 'users' || activeTab === 'settings') ? 'dashboard' : activeTab;
 
   const renderNavigationLinks = () => (
     <>
@@ -120,6 +141,21 @@ export default function App() {
         </button>
       )}
 
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={() => handleSelectTab('settings')}
+          className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            effectiveTab === 'settings'
+              ? 'bg-slate-900 text-white'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <Settings className="w-4 h-4 shrink-0" />
+          <span>{t.nav.settings}</span>
+        </button>
+      )}
+
       <button
         type="button"
         onClick={() => handleSelectTab('profile')}
@@ -162,15 +198,19 @@ export default function App() {
       <aside className="hidden lg:flex lg:flex-col lg:justify-between lg:w-60 lg:h-dvh bg-white border-r border-slate-200 shrink-0">
         {/* Top Brand Header */}
         <div className="h-14 px-5 flex items-center justify-between border-b border-slate-200 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 bg-slate-900 rounded flex items-center justify-center text-white font-mono text-[11px] font-semibold">
-              KB
-            </div>
-            <span className="text-sm font-bold tracking-tight text-slate-900 whitespace-nowrap">
-              {t.brand.name}
+          <div className="flex items-center gap-2.5 truncate">
+            {branding.logoUrl ? (
+              <img src={branding.logoUrl} alt="Logo" className="w-6 h-6 object-contain rounded shrink-0" />
+            ) : (
+              <div className="w-6 h-6 bg-slate-900 rounded flex items-center justify-center text-white font-mono text-[11px] font-semibold shrink-0">
+                {branding.logoText || 'AP'}
+              </div>
+            )}
+            <span className="text-sm font-bold tracking-tight text-slate-900 truncate">
+              {branding.platformName}
             </span>
           </div>
-          <span className="font-mono text-[11px] text-slate-400 tabular-nums">
+          <span className="font-mono text-[11px] text-slate-400 tabular-nums shrink-0">
             {t.brand.version}
           </span>
         </div>
@@ -204,12 +244,16 @@ export default function App() {
           >
             {/* Mobile Drawer Top Header */}
             <div className="h-14 px-4 flex items-center justify-between border-b border-slate-200 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-6 h-6 bg-slate-900 rounded flex items-center justify-center text-white font-mono text-[11px] font-semibold">
-                  KB
-                </div>
-                <span className="text-sm font-bold tracking-tight text-slate-900 whitespace-nowrap">
-                  {t.brand.name}
+              <div className="flex items-center gap-2.5 truncate">
+                {branding.logoUrl ? (
+                  <img src={branding.logoUrl} alt="Logo" className="w-6 h-6 object-contain rounded shrink-0" />
+                ) : (
+                  <div className="w-6 h-6 bg-slate-900 rounded flex items-center justify-center text-white font-mono text-[11px] font-semibold shrink-0">
+                    {branding.logoText || 'AP'}
+                  </div>
+                )}
+                <span className="text-sm font-bold tracking-tight text-slate-900 truncate">
+                  {branding.platformName}
                 </span>
               </div>
 
@@ -250,7 +294,7 @@ export default function App() {
             </button>
 
             <div className="flex items-center gap-2 text-xs text-slate-500 whitespace-nowrap overflow-hidden">
-              <span className="font-medium text-slate-800">{t.brand.name}</span>
+              <span className="font-medium text-slate-800">{branding.platformName}</span>
               <span aria-hidden="true">/</span>
               <span className="text-slate-600 truncate">
                 {effectiveTab === 'dashboard' && t.nav.dashboard}
@@ -258,6 +302,7 @@ export default function App() {
                 {effectiveTab === 'wordpress' && t.nav.wordpress}
                 {effectiveTab === 'users' && t.nav.users}
                 {effectiveTab === 'profile' && t.nav.profile}
+                {effectiveTab === 'settings' && t.nav.settings}
               </span>
             </div>
           </div>
@@ -309,6 +354,21 @@ export default function App() {
                 locale={locale}
                 onUserUpdated={setUser}
                 onLocaleChange={setLocale}
+              />
+            )}
+            {effectiveTab === 'settings' && isAdmin && (
+              <SettingsView
+                token={token}
+                onSettingsUpdated={(s) => {
+                  setBranding({
+                    platformName: s.platformName,
+                    platformTagline: s.platformTagline,
+                    browserTitle: s.browserTitle,
+                    logoText: s.logoText,
+                    logoUrl: s.logoUrl,
+                  });
+                  document.title = s.browserTitle || `${s.platformName} — Painel Editorial`;
+                }}
               />
             )}
           </div>

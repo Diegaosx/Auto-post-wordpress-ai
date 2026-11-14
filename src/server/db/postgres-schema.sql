@@ -145,3 +145,11 @@ CREATE TABLE IF NOT EXISTS captured_articles (
 CREATE INDEX IF NOT EXISTS idx_captured_articles_source_id ON captured_articles (source_id);
 CREATE INDEX IF NOT EXISTS idx_captured_articles_status ON captured_articles (status);
 CREATE INDEX IF NOT EXISTS idx_captured_articles_created_at ON captured_articles (created_at DESC);
+
+-- 9. SYSTEM SETTINGS TABLE (Branding, White-Label & AI Engine)
+CREATE TABLE IF NOT EXISTS system_settings (
+  id VARCHAR(64) PRIMARY KEY DEFAULT 'global_config',
+  settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+

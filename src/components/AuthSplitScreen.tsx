@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Locale, User } from '../shared/types';
+import { Locale, User, PublicBrandingSettings } from '../shared/types';
 import { translations } from '../shared/i18n';
 import { ChevronLeft, ChevronRight, ArrowRight, Check, Copy } from 'lucide-react';
 
@@ -7,6 +7,7 @@ interface AuthSplitScreenProps {
   locale: Locale;
   onLocaleChange: (loc: Locale) => void;
   onAuthSuccess: (token: string, user: User) => void;
+  branding?: PublicBrandingSettings | null;
 }
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset';
@@ -15,6 +16,7 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
   locale,
   onLocaleChange,
   onAuthSuccess,
+  branding,
 }) => {
   const t = translations[locale];
   const [mode, setMode] = useState<AuthMode>('login');
@@ -179,11 +181,15 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
         {/* Top bar: Brand + Language Selector */}
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-slate-900 rounded flex items-center justify-center text-white font-mono text-xs font-semibold">
-              KB
-            </div>
+            {branding?.logoUrl ? (
+              <img src={branding.logoUrl} alt="Logo" className="w-7 h-7 object-contain rounded" />
+            ) : (
+              <div className="w-7 h-7 bg-slate-900 rounded flex items-center justify-center text-white font-mono text-xs font-semibold">
+                {branding?.logoText || 'AP'}
+              </div>
+            )}
             <span className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap">
-              {t.brand.name}
+              {branding?.platformName || t.brand.name}
             </span>
           </div>
 
@@ -562,8 +568,8 @@ export const AuthSplitScreen: React.FC<AuthSplitScreenProps> = ({
 
         {/* Bottom quiet copyright */}
         <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>{t.brand.name}</span>
-          <span className="font-mono tabular-nums">PostgreSQL · BullMQ · HS256</span>
+          <span>{branding?.platformName || t.brand.name}</span>
+          <span className="font-mono tabular-nums">PostgreSQL · Multi-LLM · WP Plugin</span>
         </div>
       </div>
 

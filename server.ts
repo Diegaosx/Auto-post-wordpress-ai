@@ -409,6 +409,11 @@ async function startServer() {
     });
   });
 
+  // Public Branding Settings (Platform Name, Logo, Browser Title)
+  app.get('/api/settings/public', (_req: Request, res: Response) => {
+    res.json(dbRepo.getPublicBranding());
+  });
+
   app.get('/api/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const user = dbRepo.findUserById(req.auth!.sub);
     if (!user) {
@@ -1202,6 +1207,78 @@ async function startServer() {
       return;
     }
     res.json({ success: true, message: 'Artigo removido.' });
+  });
+
+  // ==========================================================================
+  // 10. SYSTEM SETTINGS & AI ENGINE CONFIGURATION
+  // ==========================================================================
+  app.get('/api/settings', requireAuth, requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+    const raw = dbRepo.getSystemSettings();
+    res.json({
+      ...raw,
+      hasOpenRouterKey: Boolean(raw.openRouterApiKey),
+      hasGeminiKey: Boolean(raw.geminiApiKey),
+      hasLlamaKey: Boolean(raw.llamaApiKey),
+    });
+  });
+
+  app.put('/api/settings', requireAuth, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+    const current = dbRepo.getSystemSettings();
+    const updates = req.body || {};
+
+    if (updates.openRouterApiKey === '' && current.openRouterApiKey) {
+      delete updates.openRouterApiKey;
+    }
+    if (updates.geminiApiKey === '' && current.geminiApiKey) {
+      delete updates.geminiApiKey;
+    }
+    if (updates.llamaApiKey === '' && current.llamaApiKey) {
+      delete updates.llamaApiKey;
+    }
+
+    const updated = dbRepo.updateSystemSettings(updates);
+
+    dbRepo.appendAuditLog({
+      actorId: req.auth!.sub,
+      actorEmail: req.auth!.email,
+      actorRole: req.auth!.role,
+      action: 'SYSTEM_SETTINGS_UPDATED',
+      category: 'security',
+      resource: '/api/settings',
+      status: 'success',
+      ipAddress: getClientIp(req),
+      latencyMs: 12,
+      metadata: { provider: updated.aiProvider, platformName: updated.platformName },
+    });
+
+    res.json({
+      success: true,
+      message: 'Configurações atualizadas com sucesso.',
+      settings: updated,
+    });
+  });
+
+  app.post('/api/settings/ai/test', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+    const { provider, apiKey, model } = req.body || {};
+
+    try {
+      const result = await executeLlmPrompt({
+        provider,
+        apiKey: apiKey?.trim() || undefined,
+        model: model?.trim() || undefined,
+        prompt: 'Responda estritamente esta frase: "OK - Motor de IA conectado com sucesso."',
+      });
+
+      res.json({
+        success: true,
+        result,
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err.message || 'Falha ao testar conexão com o motor de IA.',
+      });
+    }
   });
 
   // ==========================================================================

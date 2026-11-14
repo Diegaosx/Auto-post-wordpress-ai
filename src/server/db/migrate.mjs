@@ -10,17 +10,7 @@ async function migrate() {
   const pool = new pg.Pool({ connectionString });
 
   try {
-    console.log('Resetting and migrating PostgreSQL schema...');
-    await pool.query(`
-      DROP TABLE IF EXISTS captured_articles CASCADE;
-      DROP TABLE IF EXISTS news_sources CASCADE;
-      DROP TABLE IF EXISTS wordpress_logs CASCADE;
-      DROP TABLE IF EXISTS wordpress_sites CASCADE;
-      DROP TABLE IF EXISTS metrics_daily CASCADE;
-      DROP TABLE IF EXISTS audit_logs CASCADE;
-      DROP TABLE IF EXISTS password_resets CASCADE;
-      DROP TABLE IF EXISTS users CASCADE;
-    `);
+    console.log('Applying PostgreSQL schema migrations...');
     await pool.query(sql);
     console.log('Schema migration applied successfully!');
 

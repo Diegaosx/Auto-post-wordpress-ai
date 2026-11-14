@@ -14,6 +14,8 @@ import {
   WordPressLog,
   NewsSource,
   CapturedArticle,
+  SystemSettings,
+  PublicBrandingSettings,
 } from '../../shared/types';
 import { hashPassword, verifyPassword, hashToken } from '../security/crypto-shield';
 import { env } from '../config/env';
@@ -41,7 +43,44 @@ interface DatabaseSchemaState {
   wpLogs: WordPressLog[];
   newsSources: NewsSource[];
   capturedArticles: CapturedArticle[];
+  settings: SystemSettings;
 }
+
+const DEFAULT_SETTINGS: SystemSettings = {
+  platformName: 'Auto Post WordPress AI',
+  platformTagline: 'Automação editorial com IA e sincronização WordPress',
+  browserTitle: 'Auto Post WordPress AI — Painel Editorial',
+  logoText: 'AP',
+  logoUrl: '',
+  aiProvider: 'openrouter',
+  openRouterApiKey: env.OPENROUTER_API_KEY || '',
+  openRouterModel: env.OPENROUTER_DEFAULT_MODEL || 'openai/gpt-4o-mini',
+  openRouterBaseUrl: env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+  geminiApiKey: env.GEMINI_API_KEY || '',
+  geminiModel: env.GEMINI_DEFAULT_MODEL || 'gemini-2.5-flash',
+  llamaApiKey: env.LLAMA_API_KEY || '',
+  llamaBaseUrl: env.LLAMA_API_BASE_URL || 'https://api.groq.com/openai/v1',
+  llamaModel: env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile',
+  aiTemperature: 0.7,
+  aiSystemPrompt: `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
+Sua missão é transformar a notícia original em uma reportagem 100% autoral, informativa, envolvente e otimizada para os mecanismos de busca.
+REGRAS OBRIGATÓRIAS:
+1. NUNCA faça cópia literal (evite plágio). Reescreva do zero trazendo clareza, contexto e dados.
+2. O conteúdo DEVE estar em HTML limpo, usando títulos <h2>, subtítulos <h3>, parágrafos <p> bem elaborados e listas <ul><li> com os pontos-chave quando relevante.
+3. Não inclua tags de documento como <html>, <body>, <head> ou <!DOCTYPE>.
+4. Crie um Título cativante e forte para atrair leitores (sem ser sensacionalista falso).
+5. Gere uma Meta Descrição (resumo de até 160 caracteres com gatilho de clique).
+6. Gere de 3 a 6 tags/palavras-chave estratégicas.
+7. Responda ESTRITAMENTE em formato JSON com as chaves:
+   - "title": string
+   - "content": string (HTML formatado)
+   - "excerpt": string (até 160 caracteres)
+   - "keywords": string[] (array de strings)
+Não inclua nenhuma outra palavra ou markdown fora do JSON.`,
+  autoRewriteArticles: true,
+  autoPublishToWordPress: false,
+  defaultRewriteTone: 'jornalistico',
+};
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const DB_FILE = path.join(DATA_DIR, 'kore_postgres_store.json');
@@ -212,6 +251,7 @@ function createInitialSeed(): DatabaseSchemaState {
     wpLogs,
     newsSources,
     capturedArticles,
+    settings: DEFAULT_SETTINGS,
   };
 }
 
@@ -444,6 +484,24 @@ class PostgresRepository {
       }));
     }
 
+    // System Settings
+    try {
+      const settingsRes = await this.pool.query('SELECT settings FROM system_settings WHERE id = $1', ['global_config']);
+      if (settingsRes.rows.length > 0 && settingsRes.rows[0]?.settings) {
+        this.state.settings = { ...DEFAULT_SETTINGS, ...settingsRes.rows[0].settings };
+      } else {
+        await this.pool.query(
+          `INSERT INTO system_settings (id, settings, updated_at)
+           VALUES ('global_config', $1, NOW())
+           ON CONFLICT (id) DO NOTHING`,
+          [JSON.stringify(DEFAULT_SETTINGS)]
+        );
+        this.state.settings = { ...DEFAULT_SETTINGS };
+      }
+    } catch (err: any) {
+      console.warn('[PostgreSQL] Could not load system_settings, using defaults:', err.message);
+    }
+
     this.persist();
   }
 
@@ -460,6 +518,7 @@ class PostgresRepository {
           if (!Array.isArray(parsed.wpLogs)) parsed.wpLogs = [];
           if (!Array.isArray(parsed.newsSources)) parsed.newsSources = [];
           if (!Array.isArray(parsed.capturedArticles)) parsed.capturedArticles = [];
+          if (!parsed.settings) parsed.settings = DEFAULT_SETTINGS;
           return parsed;
         }
       }
@@ -1090,6 +1149,49 @@ class PostgresRepository {
       return true;
     }
     return false;
+  }
+
+  // ==========================================================================
+  // SYSTEM SETTINGS & BRANDING
+  // ==========================================================================
+  public getSystemSettings(): SystemSettings {
+    if (!this.state.settings) {
+      this.state.settings = { ...DEFAULT_SETTINGS };
+    }
+    return { ...this.state.settings };
+  }
+
+  public getPublicBranding(): PublicBrandingSettings {
+    const s = this.getSystemSettings();
+    return {
+      platformName: s.platformName,
+      platformTagline: s.platformTagline,
+      browserTitle: s.browserTitle,
+      logoText: s.logoText,
+      logoUrl: s.logoUrl,
+    };
+  }
+
+  public updateSystemSettings(updates: Partial<SystemSettings>): SystemSettings {
+    if (!this.state.settings) {
+      this.state.settings = { ...DEFAULT_SETTINGS };
+    }
+    this.state.settings = {
+      ...this.state.settings,
+      ...updates,
+    };
+    this.persist();
+
+    if (this.pool) {
+      this.pool.query(
+        `INSERT INTO system_settings (id, settings, updated_at)
+         VALUES ('global_config', $1, NOW())
+         ON CONFLICT (id) DO UPDATE SET settings = EXCLUDED.settings, updated_at = NOW()`,
+        [JSON.stringify(this.state.settings)]
+      ).catch((err: any) => console.error('[PostgreSQL] Error updating system_settings:', err.message));
+    }
+
+    return { ...this.state.settings };
   }
 }
 

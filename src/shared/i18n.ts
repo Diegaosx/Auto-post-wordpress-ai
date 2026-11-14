@@ -47,6 +47,7 @@ export interface Translations {
     wordpress: string;
     users: string;
     profile: string;
+    settings: string;
     signOut: string;
     roleAdmin: string;
     roleClient: string;
@@ -190,6 +191,7 @@ export const translations: Record<Locale, Translations> = {
       wordpress: 'Sites WordPress',
       users: 'Usuários',
       profile: 'Perfil',
+      settings: 'Configurações',
       signOut: 'Sair',
       roleAdmin: 'Administrador',
       roleClient: 'Cliente',
@@ -331,6 +333,7 @@ export const translations: Record<Locale, Translations> = {
       wordpress: 'Sitios WordPress',
       users: 'Usuarios',
       profile: 'Perfil',
+      settings: 'Configuraciones',
       signOut: 'Salir',
       roleAdmin: 'Administrador',
       roleClient: 'Cliente',
@@ -472,6 +475,7 @@ export const translations: Record<Locale, Translations> = {
       wordpress: 'WordPress Sites',
       users: 'Users',
       profile: 'Profile',
+      settings: 'Settings',
       signOut: 'Sign out',
       roleAdmin: 'Administrator',
       roleClient: 'Client',
