@@ -21,6 +21,8 @@ import {
   Calendar,
   Cloud,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 interface ScraperViewProps {
@@ -33,10 +35,13 @@ export function ScraperView({ token }: ScraperViewProps) {
   const [sites, setSites] = useState<WordPressSite[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  // Filters & Pagination
   const [selectedSourceId, setSelectedSourceId] = useState<string>('all');
+  const [r2Filter, setR2Filter] = useState<'all' | 'synced' | 'unsynced'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Loading States
   const [scrapingSourceId, setScrapingSourceId] = useState<string | null>(null);
@@ -364,22 +369,63 @@ export function ScraperView({ token }: ScraperViewProps) {
     }
   };
 
-  // Filtered Articles
-  const filteredArticles = articles.filter((art) => {
-    if (statusFilter !== 'all' && art.status !== statusFilter) return false;
-    if (selectedSourceId !== 'all' && art.sourceId !== selectedSourceId) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchTitle = art.originalTitle.toLowerCase().includes(q) || (art.aiTitle && art.aiTitle.toLowerCase().includes(q));
-      const matchSource = art.sourceName.toLowerCase().includes(q);
-      return matchTitle || matchSource;
-    }
-    return true;
-  });
+  // Filtered and Sorted Articles
+  const filteredArticles = articles
+    .filter((art) => {
+      // Filtro por Fonte
+      if (selectedSourceId !== 'all' && art.sourceId !== selectedSourceId) {
+        return false;
+      }
+      // Filtro por Cloudflare R2
+      if (r2Filter === 'synced' && !art.r2JsonUrl) return false;
+      if (r2Filter === 'unsynced' && art.r2JsonUrl) return false;
+      // Filtro de Busca por Texto
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchTitle = art.originalTitle.toLowerCase().includes(q) || (art.aiTitle && art.aiTitle.toLowerCase().includes(q));
+        const matchSource = art.sourceName.toLowerCase().includes(q);
+        const matchAuthor = art.author ? art.author.toLowerCase().includes(q) : false;
+        const matchExcerpt = art.originalExcerpt ? art.originalExcerpt.toLowerCase().includes(q) : false;
+        if (!matchTitle && !matchSource && !matchAuthor && !matchExcerpt) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const timeA = new Date(a.publishedAt || a.createdAt).getTime();
+      const timeB = new Date(b.publishedAt || b.createdAt).getTime();
+      return sortOrder === 'newest' ? timeB - timeA : timeA - timeB;
+    });
 
-  const countPending = articles.filter((a) => a.status === 'pending').length;
-  const countReady = articles.filter((a) => a.status === 'ready').length;
-  const countPublished = articles.filter((a) => a.status === 'published').length;
+  const totalArticles = filteredArticles.length;
+  const totalPages = Math.max(1, Math.ceil(totalArticles / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const paginatedArticles = filteredArticles.slice(startIndex, startIndex + pageSize);
+
+  const handleSourceFilterChange = (sourceId: string) => {
+    setSelectedSourceId(sourceId);
+    setCurrentPage(1);
+  };
+
+  const handleR2FilterChange = (val: 'all' | 'synced' | 'unsynced') => {
+    setR2Filter(val);
+    setCurrentPage(1);
+  };
+
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    setCurrentPage(1);
+  };
+
+  const handleSortChange = (val: 'newest' | 'oldest') => {
+    setSortOrder(val);
+    setCurrentPage(1);
+  };
+
+  const handlePageSizeChange = (val: number) => {
+    setPageSize(val);
+    setCurrentPage(1);
+  };
 
   return (
     <div className="space-y-6">
@@ -452,31 +498,46 @@ export function ScraperView({ token }: ScraperViewProps) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-500">Artigos Capturados</span>
+            <FileText className="w-4 h-4 text-indigo-500" />
+          </div>
+          <div className="text-2xl font-bold text-slate-900 mt-2">{articles.length}</div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+          <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">Fontes Ativas</span>
-            <Rss className="w-4 h-4 text-indigo-500" />
+            <Rss className="w-4 h-4 text-emerald-500" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 mt-2">{sources.length}</div>
+          <div className="text-2xl font-bold text-slate-900 mt-2">
+            {sources.filter((s) => s.active !== false).length}
+          </div>
         </div>
+
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">Aguardando IA</span>
-            <Clock className="w-4 h-4 text-amber-500" />
+            <span className="text-xs font-medium text-slate-500">No Cloudflare R2</span>
+            <Cloud className="w-4 h-4 text-orange-500" />
           </div>
-          <div className="text-2xl font-bold text-amber-600 mt-2">{countPending}</div>
+          <div className="text-2xl font-bold text-orange-600 mt-2">
+            {articles.filter((a) => a.r2JsonUrl).length}
+          </div>
         </div>
+
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">Prontos p/ Postar</span>
-            <Sparkles className="w-4 h-4 text-indigo-500" />
+            <span className="text-xs font-medium text-slate-500">Capturados Hoje</span>
+            <Calendar className="w-4 h-4 text-indigo-500" />
           </div>
-          <div className="text-2xl font-bold text-indigo-600 mt-2">{countReady}</div>
-        </div>
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-500">Publicados no WP</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+          <div className="text-2xl font-bold text-indigo-600 mt-2">
+            {
+              articles.filter((a) => {
+                const d = new Date(a.publishedAt || a.createdAt);
+                const today = new Date();
+                return d.toDateString() === today.toDateString();
+              }).length
+            }
           </div>
-          <div className="text-2xl font-bold text-emerald-600 mt-2">{countPublished}</div>
         </div>
       </div>
 
@@ -566,69 +627,91 @@ export function ScraperView({ token }: ScraperViewProps) {
 
       {/* Articles Feed & Operations */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-5">
           <div>
-            <h3 className="text-base font-bold text-slate-900">Artigos Minerados ({filteredArticles.length})</h3>
-            <p className="text-xs text-slate-500">
-              Revise as matérias capturadas, reescreva com o Gemini e envie para seus sites WordPress.
+            <h3 className="text-base font-bold text-slate-900">Artigos Minerados ({totalArticles})</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Matérias capturadas e sanitizadas para consumo pelos sites WordPress via plugin.
             </p>
-          </div>
-
-          {/* Search Box */}
-          <div className="relative w-full sm:w-64">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar nas notícias..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-            />
           </div>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex flex-wrap items-center gap-2 pb-4 mb-4 border-b border-slate-100">
-          <button
-            onClick={() => setStatusFilter('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-              statusFilter === 'all'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Todos ({articles.length})
-          </button>
-          <button
-            onClick={() => setStatusFilter('pending')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-              statusFilter === 'pending'
-                ? 'bg-amber-600 text-white'
-                : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-            }`}
-          >
-            Aguardando IA ({countPending})
-          </button>
-          <button
-            onClick={() => setStatusFilter('ready')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-              statusFilter === 'ready'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
-            }`}
-          >
-            Prontos p/ Postar ({countReady})
-          </button>
-          <button
-            onClick={() => setStatusFilter('published')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-              statusFilter === 'published'
-                ? 'bg-emerald-600 text-white'
-                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-            }`}
-          >
-            Publicados ({countPublished})
-          </button>
+        {/* Filters and Search Bar */}
+        <div className="bg-slate-50/80 p-3.5 rounded-xl border border-slate-200/80 mb-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 flex-1">
+            {/* Source Filter */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">Fonte:</span>
+              <select
+                value={selectedSourceId}
+                onChange={(e) => handleSourceFilterChange(e.target.value)}
+                className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium text-slate-800"
+              >
+                <option value="all">Todas as Fontes ({articles.length})</option>
+                {sources.map((src) => {
+                  const count = articles.filter((a) => a.sourceId === src.id).length;
+                  return (
+                    <option key={src.id} value={src.id}>
+                      {src.name} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* R2 Filter */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">R2 Edge:</span>
+              <select
+                value={r2Filter}
+                onChange={(e) => handleR2FilterChange(e.target.value as any)}
+                className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium text-slate-800"
+              >
+                <option value="all">Todos os Artigos</option>
+                <option value="synced">Sincronizados no R2</option>
+                <option value="unsynced">Sem R2</option>
+              </select>
+            </div>
+
+            {/* Sort Filter */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">Ordem:</span>
+              <select
+                value={sortOrder}
+                onChange={(e) => handleSortChange(e.target.value as any)}
+                className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium text-slate-800"
+              >
+                <option value="newest">Mais Recentes Primeiro</option>
+                <option value="oldest">Mais Antigos Primeiro</option>
+              </select>
+            </div>
+
+            {(selectedSourceId !== 'all' || r2Filter !== 'all' || searchQuery.trim()) && (
+              <button
+                onClick={() => {
+                  setSelectedSourceId('all');
+                  setR2Filter('all');
+                  setSearchQuery('');
+                  setCurrentPage(1);
+                }}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold underline underline-offset-2 ml-1 cursor-pointer"
+              >
+                Limpar filtros
+              </button>
+            )}
+          </div>
+
+          {/* Search Box */}
+          <div className="relative w-full lg:w-72">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar título, resumo ou autor..."
+              value={searchQuery}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-slate-800"
+            />
+          </div>
         </div>
 
         {/* Articles Table / Cards */}
@@ -637,14 +720,14 @@ export function ScraperView({ token }: ScraperViewProps) {
             <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-600" />
             Carregando artigos...
           </div>
-        ) : filteredArticles.length === 0 ? (
+        ) : paginatedArticles.length === 0 ? (
           <div className="text-center py-12 text-slate-400 text-xs">
             Nenhum artigo encontrado com os filtros selecionados.
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {filteredArticles.map((art) => (
-              <div key={art.id} className="py-4.5 flex flex-col md:flex-row items-start gap-4 hover:bg-slate-50/70 p-3 rounded-xl transition-colors">
+            {paginatedArticles.map((art) => (
+              <div key={art.id} className="py-4 flex flex-col md:flex-row items-start gap-4 hover:bg-slate-50/70 p-3 rounded-xl transition-colors">
                 {/* Thumbnail Image */}
                 <div className="w-full md:w-36 h-24 shrink-0 rounded-lg bg-slate-100 overflow-hidden relative border border-slate-200">
                   {art.imageUrl ? (
@@ -663,7 +746,7 @@ export function ScraperView({ token }: ScraperViewProps) {
 
                 {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center flex-wrap gap-2 mb-1">
                     <span className="text-[11px] font-bold text-indigo-600">{art.sourceName}</span>
                     <span className="text-slate-300">•</span>
                     <span className="text-[11px] text-slate-400">
@@ -671,27 +754,10 @@ export function ScraperView({ token }: ScraperViewProps) {
                     </span>
                     <span className="text-slate-300">•</span>
 
-                    {/* Status Badge */}
-                    {art.status === 'ready' && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        <Sparkles className="w-2.5 h-2.5" /> REESCRITO COM IA
-                      </span>
-                    )}
-                    {art.status === 'published' && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <CheckCircle2 className="w-2.5 h-2.5" /> PUBLICADO WP
-                      </span>
-                    )}
-                    {art.status === 'pending' && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                        <Clock className="w-2.5 h-2.5" /> PENDENTE
-                      </span>
-                    )}
-                    {art.status === 'rewriting' && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200 animate-pulse">
-                        <Sparkles className="w-2.5 h-2.5" /> GERANDO IA...
-                      </span>
-                    )}
+                    {/* Status Badge: Capturado */}
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> CAPTURADO
+                    </span>
 
                     {/* R2 Cloud Storage Badge */}
                     {art.r2JsonUrl && (
@@ -736,79 +802,126 @@ export function ScraperView({ token }: ScraperViewProps) {
                   <p className="text-xs text-slate-600 line-clamp-2 mt-1">
                     {art.aiExcerpt || art.originalExcerpt}
                   </p>
-
-                  {/* SEO Keywords tags if available */}
-                  {art.aiSeoKeywords && art.aiSeoKeywords.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {art.aiSeoKeywords.slice(0, 4).map((kw, i) => (
-                        <span key={i} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px]">
-                          #{kw}
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 {/* Actions Button Group */}
                 <div className="flex flex-row md:flex-col items-center md:items-end gap-2 shrink-0 w-full md:w-auto justify-end border-t md:border-t-0 pt-2 md:pt-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => setPreviewArticle(art)}
-                      className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                      title="Ver Prévia Completa"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                      title="Visualizar Conteúdo da Matéria"
                     >
-                      <Eye className="w-4 h-4" />
+                      <Eye className="w-3.5 h-3.5 text-slate-500" />
+                      Visualizar
                     </button>
-                    <button
-                      onClick={() => handleSyncArticleR2(art.id)}
-                      disabled={syncingArticleR2Id === art.id}
-                      className="p-1.5 text-slate-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer"
-                      title="Sincronizar Artigo no Cloudflare R2"
-                    >
-                      <Cloud className={`w-4 h-4 ${syncingArticleR2Id === art.id ? 'animate-spin text-orange-500' : ''}`} />
-                    </button>
+
                     <a
-                      href={art.wpPermalink || art.originalUrl}
+                      href={art.originalUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                      title="Abrir Link Externo"
+                      title="Abrir Fonte Original"
                     >
                       <ExternalLink className="w-4 h-4" />
                     </a>
+
+                    {art.r2JsonUrl && (
+                      <a
+                        href={art.r2JsonUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors cursor-pointer"
+                        title="Ver JSON no Cloudflare R2"
+                      >
+                        <Cloud className="w-4 h-4" />
+                      </a>
+                    )}
+
                     <button
                       onClick={() => handleDeleteArticle(art.id)}
                       className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      title="Excluir"
+                      title="Excluir Artigo"
                     >
                       <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleRewriteArticle(art.id)}
-                      disabled={rewritingArticleId === art.id}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors disabled:opacity-50 cursor-pointer"
-                    >
-                      <Sparkles className={`w-3.5 h-3.5 ${rewritingArticleId === art.id ? 'animate-spin' : ''}`} />
-                      {rewritingArticleId === art.id ? 'Gerando...' : art.aiTitle ? 'Re-escrever' : 'Gerar com IA'}
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setPublishModalArticle(art);
-                      }}
-                      disabled={publishingArticleId === art.id || sites.length === 0}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      {art.status === 'published' ? 'Re-postar' : 'Postar no WP'}
                     </button>
                   </div>
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="pt-4 mt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+            <div>
+              Mostrando <strong className="text-slate-800">{startIndex + 1}</strong> a{' '}
+              <strong className="text-slate-800">{Math.min(startIndex + pageSize, totalArticles)}</strong> de{' '}
+              <strong className="text-slate-800">{totalArticles}</strong> artigos
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safeCurrentPage === 1}
+                className="px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer font-medium text-slate-700"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Anterior
+              </button>
+
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter((page) => {
+                  return (
+                    page === 1 ||
+                    page === totalPages ||
+                    Math.abs(page - safeCurrentPage) <= 1
+                  );
+                })
+                .map((page, idx, arr) => {
+                  const prevPage = arr[idx - 1];
+                  return (
+                    <React.Fragment key={page}>
+                      {prevPage && page - prevPage > 1 && (
+                        <span className="px-1 text-slate-300">...</span>
+                      )}
+                      <button
+                        onClick={() => setCurrentPage(page)}
+                        className={`min-w-8 h-8 px-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                          safeCurrentPage === page
+                            ? 'bg-indigo-600 text-white'
+                            : 'border border-slate-200 hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safeCurrentPage === totalPages}
+                className="px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer font-medium text-slate-700"
+              >
+                Próximo
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span>Por página:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                className="px-2 py-1 border border-slate-200 rounded-md text-xs bg-white text-slate-700 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
           </div>
         )}
       </div>
@@ -1162,8 +1275,8 @@ export function ScraperView({ token }: ScraperViewProps) {
 
             <div className="p-6 overflow-y-auto space-y-4">
               <div className="flex flex-wrap gap-2 text-xs">
-                <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 font-medium">
-                  Status: <strong>{previewArticle.status}</strong>
+                <span className="px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 font-medium border border-emerald-200 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" /> Capturado
                 </span>
                 {previewArticle.wpPermalink && (
                   <a
@@ -1245,23 +1358,26 @@ export function ScraperView({ token }: ScraperViewProps) {
               </button>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleRewriteArticle(previewArticle.id)}
-                  disabled={rewritingArticleId === previewArticle.id}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-indigo-700 bg-white border border-indigo-200 rounded-lg hover:bg-indigo-50 cursor-pointer"
+                <a
+                  href={previewArticle.originalUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
                 >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {rewritingArticleId === previewArticle.id ? 'Gerando...' : 'Re-escrever com IA'}
-                </button>
-                <button
-                  onClick={() => {
-                    setPublishModalArticle(previewArticle);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow cursor-pointer"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  Publicar no WordPress
-                </button>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Abrir Fonte Original
+                </a>
+                {previewArticle.r2JsonUrl && (
+                  <a
+                    href={previewArticle.r2JsonUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 cursor-pointer"
+                  >
+                    <Cloud className="w-3.5 h-3.5 text-orange-500" />
+                    Ver JSON no R2
+                  </a>
+                )}
               </div>
             </div>
           </div>
