@@ -1540,8 +1540,6 @@ async function startServer() {
                   readyArticle = await rewriteArticleWithAi(candidate.id, {
                     targetSiteId: site.id,
                     tone: site.aiTone as any,
-                    provider: site.aiProvider,
-                    model: site.aiModel,
                   });
                 }
                 await syncArticleToWordPress(readyArticle.id, site.id);

@@ -384,8 +384,8 @@ export async function rewriteArticleWithAi(
   }
 
   const tone = options?.tone || targetSite?.aiTone || settings.defaultRewriteTone || 'jornalistico';
-  const provider = (options?.provider || targetSite?.aiProvider || settings.aiProvider || 'openrouter') as LLMProviderId;
-  const model = options?.model || targetSite?.aiModel || (provider === 'openrouter' ? settings.openRouterModel : (provider === 'gemini' ? settings.geminiModel : settings.llamaModel));
+  const provider = (options?.provider || settings.aiProvider || 'openrouter') as LLMProviderId;
+  const model = options?.model || (provider === 'openrouter' ? settings.openRouterModel : (provider === 'gemini' ? settings.geminiModel : settings.llamaModel));
 
   let systemPrompt = settings.aiSystemPrompt || `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
 Sua missão é transformar a notícia original em uma reportagem 100% autoral, informativa, envolvente e otimizada para os mecanismos de busca.

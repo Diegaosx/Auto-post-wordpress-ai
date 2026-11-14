@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { WordPressSite, WordPressLog, NewsSource, LLMProviderId } from '../shared/types';
+import { WordPressSite, WordPressLog, NewsSource } from '../shared/types';
 import {
   Globe,
   Plus,
@@ -61,8 +61,6 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
   const [formUseAllSources, setFormUseAllSources] = useState(true);
   const [formSelectedSources, setFormSelectedSources] = useState<string[]>([]);
   const [formAiCustomInstructions, setFormAiCustomInstructions] = useState('');
-  const [formAiProvider, setFormAiProvider] = useState<LLMProviderId>('openrouter');
-  const [formAiModel, setFormAiModel] = useState('openai/gpt-4o-mini');
   const [formAiTone, setFormAiTone] = useState('jornalistico');
   const [regenerateKeyOnSave, setRegenerateKeyOnSave] = useState(false);
 
@@ -181,8 +179,6 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
     setFormUseAllSources(true);
     setFormSelectedSources([]);
     setFormAiCustomInstructions('');
-    setFormAiProvider('openrouter');
-    setFormAiModel('openai/gpt-4o-mini');
     setFormAiTone('jornalistico');
     setRegenerateKeyOnSave(false);
     setViewMode('editor');
@@ -202,8 +198,6 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
     setFormUseAllSources(!hasSources);
     setFormSelectedSources(site.sourceIds || []);
     setFormAiCustomInstructions(site.aiCustomInstructions || '');
-    setFormAiProvider(site.aiProvider || 'openrouter');
-    setFormAiModel(site.aiModel || (site.aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'openai/gpt-4o-mini'));
     setFormAiTone(site.aiTone || 'jornalistico');
     setRegenerateKeyOnSave(false);
     setViewMode('editor');
@@ -224,8 +218,6 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
       publishFrequencyMinutes: Number(formPublishFrequency) || 60,
       sourceIds: formUseAllSources ? [] : formSelectedSources,
       aiCustomInstructions: formAiCustomInstructions.trim(),
-      aiProvider: formAiProvider,
-      aiModel: formAiModel.trim(),
       aiTone: formAiTone,
       regenerateKey: regenerateKeyOnSave,
     };
@@ -715,42 +707,8 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
               </p>
             </div>
 
-            {/* AI Provider & Tone Selector */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Provedor de IA para este Site
-                </label>
-                <select
-                  value={formAiProvider}
-                  onChange={(e) => {
-                    const p = e.target.value as LLMProviderId;
-                    setFormAiProvider(p);
-                    if (p === 'gemini') setFormAiModel('gemini-2.5-flash');
-                    else if (p === 'llama') setFormAiModel('llama-3.3-70b-versatile');
-                    else setFormAiModel('openai/gpt-4o-mini');
-                  }}
-                  className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
-                >
-                  <option value="openrouter">OpenRouter (Multi-Modelos)</option>
-                  <option value="gemini">Google Gemini</option>
-                  <option value="llama">Groq / Llama</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Modelo de IA
-                </label>
-                <input
-                  type="text"
-                  placeholder="ex: openai/gpt-4o-mini"
-                  value={formAiModel}
-                  onChange={(e) => setFormAiModel(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-xs"
-                />
-              </div>
-
+            {/* Tone Selector & Global Admin AI Notice */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                   Tom Editorial
@@ -767,6 +725,14 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                   <option value="descontraido">Descontraído & Informal</option>
                   <option value="opinativo">Opinativo & Enérgico</option>
                 </select>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-start gap-3">
+                <Cpu className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
+                <div className="text-xs text-slate-600 leading-relaxed">
+                  <strong className="text-slate-800 font-semibold block mb-0.5">Motor de IA Padronizado:</strong>
+                  Este site utiliza automaticamente o provedor de IA e modelo definidos pelo administrador na aba <em>Configurações</em> da plataforma.
+                </div>
               </div>
             </div>
           </div>
