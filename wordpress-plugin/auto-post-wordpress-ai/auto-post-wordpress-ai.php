@@ -36,18 +36,27 @@ class AutoPostWordPressAI {
         $this->api_key = get_option('autopost_ai_api_key', '');
         $this->api_url = get_option('autopost_ai_api_url', '');
 
-        if (empty($this->api_url) || $this->api_url === '{{API_URL}}') {
-            $default = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
-                ? AUTO_POST_AI_DEFAULT_API_URL
-                : 'http://localhost:3000';
-            $this->api_url = $default;
+        $default_constant = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
+            ? AUTO_POST_AI_DEFAULT_API_URL
+            : '';
+
+        if (!empty($default_constant)) {
+            $this->api_url = $default_constant;
+            if (get_option('autopost_ai_api_url') !== $default_constant) {
+                update_option('autopost_ai_api_url', $default_constant);
+            }
+        } elseif (empty($this->api_url) || $this->api_url === '{{API_URL}}' || $this->api_url === 'http://localhost:3000') {
+            $this->api_url = 'https://auto-post-wordpress-ai-production.up.railway.app';
             update_option('autopost_ai_api_url', $this->api_url);
         }
     }
 
     public function activate() {
         add_option('autopost_ai_api_key', '');
-        add_option('autopost_ai_api_url', 'http://localhost:3000');
+        $default = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
+            ? AUTO_POST_AI_DEFAULT_API_URL
+            : 'https://auto-post-wordpress-ai-production.up.railway.app';
+        update_option('autopost_ai_api_url', $default);
         add_option('autopost_ai_status', 'disconnected');
         add_option('autopost_ai_last_sync', 'Nunca');
         flush_rewrite_rules();
@@ -72,23 +81,28 @@ class AutoPostWordPressAI {
     public function render_admin_page() {
         if (isset($_POST['autopost_save_settings']) && check_admin_referer('autopost_save_nonce', 'autopost_nonce_field')) {
             $new_key = sanitize_text_field($_POST['api_key'] ?? '');
-            $new_url = esc_url_raw(rtrim($_POST['api_url'] ?? '', '/'));
-
             if (!empty($new_key)) {
                 update_option('autopost_ai_api_key', $new_key);
                 $this->api_key = $new_key;
             }
-            if (!empty($new_url)) {
-                update_option('autopost_ai_api_url', $new_url);
-                $this->api_url = $new_url;
-            }
+
+            $target_url = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
+                ? AUTO_POST_AI_DEFAULT_API_URL
+                : (!empty($_POST['api_url']) ? esc_url_raw(rtrim($_POST['api_url'], '/')) : 'https://auto-post-wordpress-ai-production.up.railway.app');
+
+            update_option('autopost_ai_api_url', $target_url);
+            $this->api_url = $target_url;
 
             echo '<div class="notice notice-success is-dismissible"><p>Configurações salvas com sucesso!</p></div>';
             $this->verify_license_connection();
         }
 
+        $default_constant = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
+            ? AUTO_POST_AI_DEFAULT_API_URL
+            : '';
+
         $api_key = get_option('autopost_ai_api_key', '');
-        $api_url = get_option('autopost_ai_api_url', 'http://localhost:3000');
+        $api_url = !empty($default_constant) ? $default_constant : get_option('autopost_ai_api_url', 'https://auto-post-wordpress-ai-production.up.railway.app');
         $status = get_option('autopost_ai_status', 'disconnected');
         $last_sync = get_option('autopost_ai_last_sync', 'Nunca');
         ?>
@@ -128,7 +142,7 @@ class AutoPostWordPressAI {
                     <?php wp_nonce_field('autopost_save_nonce', 'autopost_nonce_field'); ?>
                     <table class="form-table" role="presentation">
                         <tr>
-                            <th scope="row" style="width: 200px;">
+                            <th scope="row" style="width: 220px;">
                                 <label for="api_key" style="font-weight: 600; color: #334155;">Chave de Licença (API Key)</label>
                             </th>
                             <td>
@@ -140,6 +154,7 @@ class AutoPostWordPressAI {
                                     class="regular-text" 
                                     style="width: 100%; max-width: 500px; font-family: monospace; font-size: 14px; padding: 8px 12px; border-radius: 6px;"
                                     placeholder="Ex: APAI-XXXX-XXXX-XXXX"
+                                    required
                                 />
                                 <p class="description" style="color: #64748b; margin-top: 6px;">
                                     Obtenha sua chave no painel do Auto Post AI na aba <strong>Sites WordPress</strong>.
@@ -148,20 +163,19 @@ class AutoPostWordPressAI {
                         </tr>
                         <tr>
                             <th scope="row">
-                                <label for="api_url" style="font-weight: 600; color: #334155;">URL do Painel / Servidor</label>
+                                <label style="font-weight: 600; color: #334155;">URL do Painel / Servidor</label>
                             </th>
                             <td>
-                                <input 
-                                    name="api_url" 
-                                    type="url" 
-                                    id="api_url" 
-                                    value="<?php echo esc_attr($api_url); ?>" 
-                                    class="regular-text" 
-                                    style="width: 100%; max-width: 500px; font-size: 14px; padding: 8px 12px; border-radius: 6px;"
-                                    placeholder="https://seu-painel-autopost.com"
-                                />
+                                <div style="display: inline-flex; align-items: center; gap: 10px; background: #f8fafc; padding: 8px 14px; border-radius: 6px; border: 1px solid #cbd5e1; min-width: 380px; max-width: 500px;">
+                                    <span style="font-size: 15px;">🔒</span>
+                                    <code style="font-size: 13px; color: #0f172a; font-weight: 600; background: transparent; padding: 0; word-break: break-all;"><?php echo esc_html($api_url); ?></code>
+                                    <span style="margin-left: auto; background: #dcfce7; color: #15803d; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px; white-space: nowrap;">
+                                        ✓ Identificado via APP_URL
+                                    </span>
+                                </div>
+                                <input type="hidden" name="api_url" id="api_url" value="<?php echo esc_attr($api_url); ?>" />
                                 <p class="description" style="color: #64748b; margin-top: 6px;">
-                                    Endereço do seu backend (ex: https://seu-dominio.up.railway.app ou http://localhost:3000).
+                                    Identificado e configurado automaticamente pelo pacote do plugin. Você não precisa alterar nem informar este campo.
                                 </p>
                             </td>
                         </tr>
@@ -242,13 +256,25 @@ class AutoPostWordPressAI {
         if ($success) {
             wp_send_json_success(array('message' => 'Site validado e conectado com sucesso ao painel Auto Post AI!'));
         } else {
-            wp_send_json_error(array('message' => 'Não foi possível validar a chave de licença no painel. Verifique a URL do servidor e a chave digitada.'));
+            wp_send_json_error(array('message' => 'Não foi possível validar a chave de licença no painel. Verifique se a chave digitada está correta no painel.'));
         }
     }
 
     public function verify_license_connection() {
         $api_key = get_option('autopost_ai_api_key', '');
         $api_url = get_option('autopost_ai_api_url', '');
+
+        $default_constant = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
+            ? AUTO_POST_AI_DEFAULT_API_URL
+            : '';
+
+        if (!empty($default_constant)) {
+            $api_url = $default_constant;
+            update_option('autopost_ai_api_url', $api_url);
+        } elseif (empty($api_url) || $api_url === '{{API_URL}}' || $api_url === 'http://localhost:3000') {
+            $api_url = 'https://auto-post-wordpress-ai-production.up.railway.app';
+            update_option('autopost_ai_api_url', $api_url);
+        }
 
         if (empty($api_key) || empty($api_url)) {
             update_option('autopost_ai_status', 'disconnected');

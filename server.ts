@@ -1,5 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { ZipArchive } from 'archiver';
 import { createServer as createViteServer } from 'vite';
@@ -987,8 +988,8 @@ async function startServer() {
     });
   });
 
-  // Download Plugin ZIP
-  app.get('/api/wordpress/plugin/download', (_req: Request, res: Response) => {
+  // Download Plugin ZIP with automatically injected APP_URL
+  app.get('/api/wordpress/plugin/download', (req: Request, res: Response) => {
     const pluginDir = path.resolve(process.cwd(), 'wordpress-plugin', 'auto-post-wordpress-ai');
     res.attachment('auto-post-wordpress-ai.zip');
     res.setHeader('Content-Type', 'application/zip');
@@ -1000,7 +1001,49 @@ async function startServer() {
     });
 
     archive.pipe(res);
-    archive.directory(pluginDir, 'auto-post-wordpress-ai');
+
+    // Resolve APP_URL dynamically (APP_URL env, request headers, or Railway production host)
+    const forwardedProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+    const forwardedHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+    const host = req.get('host') || '';
+    const detectedHost = forwardedHost
+      ? `${forwardedProto || 'https'}://${forwardedHost}`
+      : (host ? `${req.protocol}://${host}` : null);
+
+    const appUrl = (
+      process.env.APP_URL ||
+      env.APP_URL ||
+      detectedHost ||
+      'https://auto-post-wordpress-ai-production.up.railway.app'
+    ).replace(/\/+$/, '');
+
+    // Injetar a URL do painel dinamicamente no arquivo auto-post-wordpress-ai.php
+    const mainPhpPath = path.join(pluginDir, 'auto-post-wordpress-ai.php');
+    if (fs.existsSync(mainPhpPath)) {
+      let phpContent = fs.readFileSync(mainPhpPath, 'utf8');
+      phpContent = phpContent.replace(
+        /define\('AUTO_POST_AI_DEFAULT_API_URL',\s*'[^']*'\);/,
+        `define('AUTO_POST_AI_DEFAULT_API_URL', '${appUrl}');`
+      );
+      phpContent = phpContent.replace(/'http:\/\/localhost:3000'/g, `'${appUrl}'`);
+
+      archive.append(phpContent, { name: 'auto-post-wordpress-ai/auto-post-wordpress-ai.php' });
+    }
+
+    // Incluir demais arquivos do diretório do plugin
+    if (fs.existsSync(pluginDir)) {
+      const entries = fs.readdirSync(pluginDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === 'auto-post-wordpress-ai.php') continue;
+        const entryPath = path.join(pluginDir, entry.name);
+        if (entry.isFile()) {
+          archive.file(entryPath, { name: `auto-post-wordpress-ai/${entry.name}` });
+        } else if (entry.isDirectory()) {
+          archive.directory(entryPath, `auto-post-wordpress-ai/${entry.name}`);
+        }
+      }
+    }
+
     archive.finalize();
   });
 
