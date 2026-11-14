@@ -1,8 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import * as archiverModule from 'archiver';
-const archiver = (archiverModule as any).default || archiverModule;
+import { ZipArchive } from 'archiver';
 import { createServer as createViteServer } from 'vite';
 import { env } from './src/server/config/env';
 import {
@@ -946,7 +945,7 @@ async function startServer() {
     res.attachment('auto-post-wordpress-ai.zip');
     res.setHeader('Content-Type', 'application/zip');
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     archive.on('error', (err: any) => {
       console.error('[Plugin Download Error]', err);
       if (!res.headersSent) res.status(500).json({ error: 'Erro ao gerar arquivo ZIP do plugin.' });
