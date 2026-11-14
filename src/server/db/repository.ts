@@ -239,9 +239,17 @@ class PostgresRepository {
       apiKey: r.api_key,
       status: r.status,
       lastSyncAt: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
-      autoPublish: r.auto_publish,
-      defaultStatus: r.default_status,
-      defaultCategory: r.default_category,
+      autoPublish: Boolean(r.auto_publish),
+      defaultStatus: r.default_status || 'publish',
+      defaultCategory: r.default_category || 'Geral',
+      sourceIds: Array.isArray(r.source_ids) ? r.source_ids : (typeof r.source_ids === 'string' ? JSON.parse(r.source_ids || '[]') : []),
+      categories: Array.isArray(r.categories) ? r.categories : (typeof r.categories === 'string' ? JSON.parse(r.categories || '[]') : []),
+      publishFrequencyMinutes: r.publish_frequency_minutes ? Number(r.publish_frequency_minutes) : 60,
+      aiCustomInstructions: r.ai_custom_instructions || '',
+      aiProvider: r.ai_provider || 'openrouter',
+      aiModel: r.ai_model || '',
+      aiTone: r.ai_tone || 'jornalistico',
+      lastPublishedAt: r.last_published_at ? new Date(r.last_published_at).toISOString() : null,
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
     }));
@@ -747,6 +755,14 @@ class PostgresRepository {
     const site: WordPressSite = {
       ...data,
       id: `site_wp_${crypto.randomBytes(6).toString('hex')}`,
+      sourceIds: data.sourceIds || [],
+      categories: data.categories || [],
+      publishFrequencyMinutes: data.publishFrequencyMinutes || 60,
+      aiCustomInstructions: data.aiCustomInstructions || '',
+      aiProvider: data.aiProvider || 'openrouter',
+      aiModel: data.aiModel || '',
+      aiTone: data.aiTone || 'jornalistico',
+      lastPublishedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -755,9 +771,29 @@ class PostgresRepository {
 
     if (this.pool) {
       this.pool.query(
-        `INSERT INTO wordpress_sites (id, user_id, site_name, site_url, api_key, status, last_sync_at, auto_publish, default_status, default_category, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [site.id, site.userId, site.siteName, site.siteUrl, site.apiKey, site.status, site.lastSyncAt, site.autoPublish, site.defaultStatus, site.defaultCategory, site.createdAt, site.updatedAt]
+        `INSERT INTO wordpress_sites (id, user_id, site_name, site_url, api_key, status, last_sync_at, auto_publish, default_status, default_category, source_ids, categories, publish_frequency_minutes, ai_custom_instructions, ai_provider, ai_model, ai_tone, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+        [
+          site.id,
+          site.userId,
+          site.siteName,
+          site.siteUrl,
+          site.apiKey,
+          site.status,
+          site.lastSyncAt,
+          site.autoPublish,
+          site.defaultStatus,
+          site.defaultCategory,
+          JSON.stringify(site.sourceIds || []),
+          JSON.stringify(site.categories || []),
+          site.publishFrequencyMinutes || 60,
+          site.aiCustomInstructions || '',
+          site.aiProvider || 'openrouter',
+          site.aiModel || '',
+          site.aiTone || 'jornalistico',
+          site.createdAt,
+          site.updatedAt,
+        ]
       ).catch((err: any) => console.error('[PostgreSQL] Error inserting wordpress site:', err.message));
     }
 
@@ -778,8 +814,45 @@ class PostgresRepository {
 
     if (this.pool) {
       this.pool.query(
-        `UPDATE wordpress_sites SET site_name=$1, site_url=$2, api_key=$3, status=$4, last_sync_at=$5, auto_publish=$6, default_status=$7, default_category=$8, updated_at=$9 WHERE id=$10`,
-        [updated.siteName, updated.siteUrl, updated.apiKey, updated.status, updated.lastSyncAt, updated.autoPublish, updated.defaultStatus, updated.defaultCategory, updated.updatedAt, updated.id]
+        `UPDATE wordpress_sites SET 
+          site_name=$1, 
+          site_url=$2, 
+          api_key=$3, 
+          status=$4, 
+          last_sync_at=$5, 
+          auto_publish=$6, 
+          default_status=$7, 
+          default_category=$8, 
+          source_ids=$9, 
+          categories=$10, 
+          publish_frequency_minutes=$11, 
+          ai_custom_instructions=$12, 
+          ai_provider=$13, 
+          ai_model=$14, 
+          ai_tone=$15, 
+          last_published_at=$16, 
+          updated_at=$17 
+        WHERE id=$18`,
+        [
+          updated.siteName,
+          updated.siteUrl,
+          updated.apiKey,
+          updated.status,
+          updated.lastSyncAt,
+          updated.autoPublish,
+          updated.defaultStatus,
+          updated.defaultCategory,
+          JSON.stringify(updated.sourceIds || []),
+          JSON.stringify(updated.categories || []),
+          updated.publishFrequencyMinutes || 60,
+          updated.aiCustomInstructions || '',
+          updated.aiProvider || 'openrouter',
+          updated.aiModel || '',
+          updated.aiTone || 'jornalistico',
+          updated.lastPublishedAt || null,
+          updated.updatedAt,
+          updated.id,
+        ]
       ).catch((err: any) => console.error('[PostgreSQL] Error updating wordpress site:', err.message));
     }
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { WordPressSite, WordPressLog } from '../shared/types';
+import { WordPressSite, WordPressLog, NewsSource, LLMProviderId } from '../shared/types';
 import {
   Globe,
   Plus,
@@ -17,6 +17,15 @@ import {
   ShieldCheck,
   FileCode,
   Sliders,
+  ArrowLeft,
+  Sparkles,
+  Cpu,
+  Layers,
+  Radio,
+  Save,
+  HelpCircle,
+  FileText,
+  RotateCcw,
 } from 'lucide-react';
 
 interface WordPressSitesViewProps {
@@ -26,19 +35,32 @@ interface WordPressSitesViewProps {
 export function WordPressSitesView({ token }: WordPressSitesViewProps) {
   const [sites, setSites] = useState<WordPressSite[]>([]);
   const [logs, setLogs] = useState<WordPressLog[]>([]);
+  const [sources, setSources] = useState<NewsSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Form State
+  // View Mode: 'list' | 'editor'
+  const [viewMode, setViewMode] = useState<'list' | 'editor'>('list');
+  const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
+
+  // Form State for Dedicated Control Screen
   const [formSiteName, setFormSiteName] = useState('');
   const [formSiteUrl, setFormSiteUrl] = useState('');
-  const [formCategory, setFormCategory] = useState('Geral');
-  const [formStatus, setFormStatus] = useState<'publish' | 'draft'>('publish');
+  const [formApiKey, setFormApiKey] = useState('');
+  const [formDefaultCategory, setFormDefaultCategory] = useState('Geral');
+  const [formDefaultStatus, setFormDefaultStatus] = useState<'publish' | 'draft'>('publish');
   const [formAutoPublish, setFormAutoPublish] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [formPublishFrequency, setFormPublishFrequency] = useState<number>(60);
+  const [formUseAllSources, setFormUseAllSources] = useState(true);
+  const [formSelectedSources, setFormSelectedSources] = useState<string[]>([]);
+  const [formAiCustomInstructions, setFormAiCustomInstructions] = useState('');
+  const [formAiProvider, setFormAiProvider] = useState<LLMProviderId>('openrouter');
+  const [formAiModel, setFormAiModel] = useState('openai/gpt-4o-mini');
+  const [formAiTone, setFormAiTone] = useState('jornalistico');
+  const [regenerateKeyOnSave, setRegenerateKeyOnSave] = useState(false);
 
   const fetchSites = async () => {
     try {
@@ -68,9 +90,23 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
     }
   };
 
+  const fetchSources = async () => {
+    try {
+      const res = await fetch('/api/scraper/sources', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSources(data);
+      }
+    } catch (err) {
+      console.error('Erro ao buscar fontes:', err);
+    }
+  };
+
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchSites(), fetchLogs()]).finally(() => setLoading(false));
+    Promise.all([fetchSites(), fetchLogs(), fetchSources()]).finally(() => setLoading(false));
   }, [token]);
 
   const handleCopyKey = (key: string) => {
@@ -113,46 +149,125 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
         setActionMessage({ type: 'success', text: 'Site removido com sucesso.' });
         fetchSites();
         fetchLogs();
+        if (editingSiteId === siteId) {
+          setViewMode('list');
+        }
       }
     } catch (err: any) {
       setActionMessage({ type: 'error', text: err.message });
     }
   };
 
-  const handleCreateSite = async (e: React.FormEvent) => {
+  const handleOpenCreateScreen = () => {
+    setEditingSiteId(null);
+    setFormSiteName('');
+    setFormSiteUrl('');
+    setFormApiKey('');
+    setFormDefaultCategory('Geral');
+    setFormDefaultStatus('publish');
+    setFormAutoPublish(true);
+    setFormPublishFrequency(60);
+    setFormUseAllSources(true);
+    setFormSelectedSources([]);
+    setFormAiCustomInstructions('');
+    setFormAiProvider('openrouter');
+    setFormAiModel('openai/gpt-4o-mini');
+    setFormAiTone('jornalistico');
+    setRegenerateKeyOnSave(false);
+    setViewMode('editor');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOpenEditScreen = (site: WordPressSite) => {
+    setEditingSiteId(site.id);
+    setFormSiteName(site.siteName || '');
+    setFormSiteUrl(site.siteUrl || '');
+    setFormApiKey(site.apiKey || '');
+    setFormDefaultCategory(site.defaultCategory || 'Geral');
+    setFormDefaultStatus(site.defaultStatus || 'publish');
+    setFormAutoPublish(site.autoPublish ?? true);
+    setFormPublishFrequency(site.publishFrequencyMinutes || 60);
+    const hasSources = Array.isArray(site.sourceIds) && site.sourceIds.length > 0;
+    setFormUseAllSources(!hasSources);
+    setFormSelectedSources(site.sourceIds || []);
+    setFormAiCustomInstructions(site.aiCustomInstructions || '');
+    setFormAiProvider(site.aiProvider || 'openrouter');
+    setFormAiModel(site.aiModel || (site.aiProvider === 'gemini' ? 'gemini-2.5-flash' : 'openai/gpt-4o-mini'));
+    setFormAiTone(site.aiTone || 'jornalistico');
+    setRegenerateKeyOnSave(false);
+    setViewMode('editor');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSaveSite = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setActionMessage(null);
 
-    try {
-      const res = await fetch('/api/wordpress/sites', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          siteName: formSiteName,
-          siteUrl: formSiteUrl,
-          defaultCategory: formCategory,
-          defaultStatus: formStatus,
-          autoPublish: formAutoPublish,
-        }),
-      });
+    const payload = {
+      siteName: formSiteName.trim(),
+      siteUrl: formSiteUrl.trim(),
+      defaultCategory: formDefaultCategory.trim() || 'Geral',
+      defaultStatus: formDefaultStatus,
+      autoPublish: formAutoPublish,
+      publishFrequencyMinutes: Number(formPublishFrequency) || 60,
+      sourceIds: formUseAllSources ? [] : formSelectedSources,
+      aiCustomInstructions: formAiCustomInstructions.trim(),
+      aiProvider: formAiProvider,
+      aiModel: formAiModel.trim(),
+      aiTone: formAiTone,
+      regenerateKey: regenerateKeyOnSave,
+    };
 
-      if (res.ok) {
-        setShowCreateModal(false);
-        setFormSiteName('');
-        setFormSiteUrl('');
-        setActionMessage({
-          type: 'success',
-          text: 'Site vinculado com sucesso! Chave de licença gerada.',
+    try {
+      if (editingSiteId) {
+        // Edit existing site
+        const res = await fetch(`/api/wordpress/sites/${editingSiteId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
         });
-        fetchSites();
-        fetchLogs();
+
+        if (res.ok) {
+          const updated = await res.json();
+          setActionMessage({
+            type: 'success',
+            text: `Configurações do site "${updated.siteName}" salvas com sucesso!`,
+          });
+          await fetchSites();
+          await fetchLogs();
+          setViewMode('list');
+        } else {
+          const err = await res.json();
+          setActionMessage({ type: 'error', text: err.error || 'Erro ao atualizar site.' });
+        }
       } else {
-        const err = await res.json();
-        setActionMessage({ type: 'error', text: err.error || 'Erro ao criar site.' });
+        // Create new site
+        const res = await fetch('/api/wordpress/sites', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          const created = await res.json();
+          setActionMessage({
+            type: 'success',
+            text: `Site "${created.siteName}" criado com sucesso! Chave de licença gerada.`,
+          });
+          await fetchSites();
+          await fetchLogs();
+          setViewMode('list');
+        } else {
+          const err = await res.json();
+          setActionMessage({ type: 'error', text: err.error || 'Erro ao cadastrar site.' });
+        }
       }
     } catch (err: any) {
       setActionMessage({ type: 'error', text: err.message });
@@ -165,6 +280,526 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
     window.location.href = '/api/wordpress/plugin/download';
   };
 
+  const toggleSourceSelection = (sourceId: string) => {
+    setFormSelectedSources((prev) =>
+      prev.includes(sourceId) ? prev.filter((id) => id !== sourceId) : [...prev, sourceId]
+    );
+  };
+
+  const applyPromptPreset = (presetText: string) => {
+    setFormAiCustomInstructions((prev) => {
+      if (!prev.trim()) return presetText;
+      return `${prev.trim()}\n\n${presetText}`;
+    });
+  };
+
+  const activeSite = editingSiteId ? sites.find((s) => s.id === editingSiteId) : null;
+
+  // ============================================================================
+  // RENDER: TELA DE CONTROLE DEDICADA (EDITOR)
+  // ============================================================================
+  if (viewMode === 'editor') {
+    return (
+      <div className="space-y-6 max-w-5xl mx-auto pb-16">
+        {/* Navigation Breadcrumb & Back */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 shadow-xs cursor-pointer transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Voltar aos Sites
+            </button>
+            <div className="h-4 w-px bg-slate-300" />
+            <div>
+              <h2 className="text-xl font-extrabold text-slate-900 flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-indigo-600" />
+                {editingSiteId ? `Controle & Edição: ${formSiteName || 'Site WordPress'}` : 'Vincular Novo Site WordPress'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                Configure fontes alimentadoras, cadência de postagem e diretrizes de IA exclusivas para este site.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveSite}
+              disabled={submitting}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/25 disabled:opacity-50 cursor-pointer transition-all hover:scale-[1.01]"
+            >
+              <Save className="w-4 h-4" />
+              {submitting ? 'Salvando...' : 'Salvar Configurações'}
+            </button>
+          </div>
+        </div>
+
+        {actionMessage && (
+          <div
+            className={`p-4 rounded-xl text-sm flex items-center justify-between shadow-xs border ${
+              actionMessage.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-rose-50 text-rose-800 border-rose-200'
+            }`}
+          >
+            <span>{actionMessage.text}</span>
+            <button
+              onClick={() => setActionMessage(null)}
+              className="text-xs font-semibold underline ml-4 hover:opacity-80 cursor-pointer"
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleSaveSite} className="space-y-6">
+          {/* Card 1: Identificação & Conexão do Portal */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+              <Globe className="w-5 h-5 text-indigo-600" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Identificação & Conexão com o WordPress</h3>
+                <p className="text-xs text-slate-500">Endereço público do site e credenciais para autenticação da REST API.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Nome do Site / Portal <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Rede, Portal Notícias Brasil, TechBlog"
+                  value={formSiteName}
+                  onChange={(e) => setFormSiteName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  URL Completa do WordPress <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://seusite.com.br"
+                  value={formSiteUrl}
+                  onChange={(e) => setFormSiteUrl(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* License Key Box (if editing) */}
+            {editingSiteId && formApiKey && (
+              <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between text-xs text-slate-600 mb-2">
+                  <span className="font-semibold flex items-center gap-1.5 text-slate-800">
+                    <Key className="w-4 h-4 text-indigo-600" />
+                    Chave de Licença (API Key do Plugin)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyKey(formApiKey)}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 cursor-pointer"
+                    >
+                      {copiedKey === formApiKey ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-emerald-600">Copiada!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copiar Chave</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="font-mono text-xs text-slate-800 bg-white px-3 py-2 rounded-lg border border-slate-200 select-all">
+                  {formApiKey}
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                  <span>Insira esta chave no menu do plugin <strong>Auto Post AI</strong> dentro do WordPress.</span>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-600 hover:text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={regenerateKeyOnSave}
+                      onChange={(e) => setRegenerateKeyOnSave(e.target.checked)}
+                      className="rounded text-indigo-600"
+                    />
+                    <span>Regerar nova chave ao salvar</span>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Card 2: Fontes de Notícias Conectadas */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <Radio className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Fontes de Notícias Vinculadas</h3>
+                  <p className="text-xs text-slate-500">
+                    Quais portais e feeds de notícias cadastrados devem enviar matérias para este site?
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="sourceMode"
+                    checked={formUseAllSources}
+                    onChange={() => setFormUseAllSources(true)}
+                    className="text-indigo-600"
+                  />
+                  <span>Todas as Fontes</span>
+                </label>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="sourceMode"
+                    checked={!formUseAllSources}
+                    onChange={() => setFormUseAllSources(false)}
+                    className="text-indigo-600"
+                  />
+                  <span>Fontes Específicas</span>
+                </label>
+              </div>
+            </div>
+
+            {formUseAllSources ? (
+              <div className="p-4 rounded-xl bg-indigo-50/60 border border-indigo-100 text-xs text-indigo-900 flex items-center gap-3">
+                <Layers className="w-5 h-5 text-indigo-600 shrink-0" />
+                <span>
+                  <strong>Modo Universal Ativo:</strong> Este site receberá notícias de todas as fontes cadastradas no sistema ({sources.length} fontes ativas).
+                </span>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-xs text-slate-500 mb-2">
+                  Selecione as fontes que alimentarão este site WordPress:
+                </div>
+                {sources.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-3 text-center">Nenhuma fonte cadastrada ainda.</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 max-h-64 overflow-y-auto pr-1">
+                    {sources.map((src) => {
+                      const isSelected = formSelectedSources.includes(src.id);
+                      return (
+                        <div
+                          key={src.id}
+                          onClick={() => toggleSourceSelection(src.id)}
+                          className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
+                            isSelected
+                              ? 'bg-indigo-50/70 border-indigo-300 text-indigo-950 font-medium'
+                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 truncate mr-2">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {}}
+                              className="rounded text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <div className="truncate">
+                              <span className="font-bold text-slate-900 block truncate">{src.name}</span>
+                              <span className="text-[11px] text-slate-500 truncate block">{src.url}</span>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 uppercase shrink-0">
+                            {src.category || 'Geral'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Selecionadas: {formSelectedSources.length} de {sources.length} fontes disponíveis.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Card 3: Frequência de Postagem & Automação */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+              <Clock className="w-5 h-5 text-indigo-600" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Frequência de Publicação & Regras WordPress</h3>
+                <p className="text-xs text-slate-500">Configure com que frequência e em qual formato os posts chegam ao site.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Frequência de Postagem Automática
+                </label>
+                <select
+                  value={formPublishFrequency}
+                  onChange={(e) => setFormPublishFrequency(Number(e.target.value))}
+                  className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
+                >
+                  <option value={15}>A cada 15 minutos (Alta intensidade)</option>
+                  <option value={30}>A cada 30 minutos</option>
+                  <option value={60}>A cada 1 hora (Recomendado)</option>
+                  <option value={120}>A cada 2 horas</option>
+                  <option value={240}>A cada 4 horas</option>
+                  <option value={360}>A cada 6 horas</option>
+                  <option value={720}>A cada 12 horas</option>
+                  <option value={1440}>A cada 24 horas (Uma vez ao dia)</option>
+                  <option value={0}>Manual (Sem postagem automática)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Status Inicial no WordPress
+                </label>
+                <select
+                  value={formDefaultStatus}
+                  onChange={(e) => setFormDefaultStatus(e.target.value as 'publish' | 'draft')}
+                  className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
+                >
+                  <option value="publish">Publicar Imediatamente (Ao Vivo)</option>
+                  <option value="draft">Salvar como Rascunho (Draft)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Categoria Padrão no WP
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Geral, Tecnologia, Política"
+                  value={formDefaultCategory}
+                  onChange={(e) => setFormDefaultCategory(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <label className="flex items-center gap-3 cursor-pointer p-3 rounded-xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/70 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={formAutoPublish}
+                  onChange={(e) => setFormAutoPublish(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                />
+                <div className="text-xs">
+                  <span className="font-bold text-slate-900 block">
+                    Publicar automaticamente conforme o agendamento de frequência
+                  </span>
+                  <span className="text-slate-500 block mt-0.5">
+                    O robô buscará a notícia mais recente das fontes vinculadas, aplicará as diretrizes de IA deste site e enviará via REST API.
+                  </span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Card 4: Diretrizes de IA e Instruções de Reescrita Exclusivas */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+              <Sparkles className="w-5 h-5 text-indigo-600" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Diretrizes Editoriais de IA para Este Site</h3>
+                <p className="text-xs text-slate-500">
+                  Instrua a Inteligência Artificial sobre como recriar, estruturar e adaptar as notícias mineradas para este portal.
+                </p>
+              </div>
+            </div>
+
+            {/* Presets Rápidos */}
+            <div>
+              <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
+                <span className="font-semibold text-slate-700">Sugestões Rápidas de Diretrizes (Clique para adicionar):</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyPromptPreset(
+                      'Adote linguagem jornalística aprofundada, neutra e com foco em dados e contexto histórico.'
+                    )
+                  }
+                  className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 transition-colors cursor-pointer"
+                >
+                  + Jornalismo Investigativo
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyPromptPreset(
+                      'Use tom descontraído e dinâmico, focado no público jovem de internet. Finalize com chamada provocativa para debate nos comentários.'
+                    )
+                  }
+                  className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 transition-colors cursor-pointer"
+                >
+                  + Jovem & Engajador
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyPromptPreset(
+                      'Destaque números, impactos econômicos, tendências de mercado e consequências para investidores e empresários.'
+                    )
+                  }
+                  className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 transition-colors cursor-pointer"
+                >
+                  + Negócios & Mercado
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    applyPromptPreset(
+                      'Estruture o artigo com foco rigoroso em SEO On-Page, usando subtítulos H2/H3 com palavras-chave semânticas e resumo de leitura em tópicos.'
+                    )
+                  }
+                  className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 border border-slate-200 transition-colors cursor-pointer"
+                >
+                  + SEO & Bullet Points
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Instructions Textarea */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Instruções e Regras Exclusivas de Redação
+              </label>
+              <textarea
+                rows={4}
+                value={formAiCustomInstructions}
+                onChange={(e) => setFormAiCustomInstructions(e.target.value)}
+                placeholder="Ex: Você é o editor-chefe do portal RedeGram. Reescreva todas as matérias trazendo títulos com alto gatilho de clique sem fake news. Sempre insira uma seção 'O que você precisa saber' em tópicos e finalize recomendando assinar nossa newsletter."
+                className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none font-sans leading-relaxed"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                {formAiCustomInstructions.length} caracteres digitados. Estas diretrizes serão incorporadas diretamente ao prompt que recria as notícias para este site.
+              </p>
+            </div>
+
+            {/* AI Provider & Tone Selector */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Provedor de IA para este Site
+                </label>
+                <select
+                  value={formAiProvider}
+                  onChange={(e) => {
+                    const p = e.target.value as LLMProviderId;
+                    setFormAiProvider(p);
+                    if (p === 'gemini') setFormAiModel('gemini-2.5-flash');
+                    else if (p === 'llama') setFormAiModel('llama-3.3-70b-versatile');
+                    else setFormAiModel('openai/gpt-4o-mini');
+                  }}
+                  className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
+                >
+                  <option value="openrouter">OpenRouter (Multi-Modelos)</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="llama">Groq / Llama</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Modelo de IA
+                </label>
+                <input
+                  type="text"
+                  placeholder="ex: openai/gpt-4o-mini"
+                  value={formAiModel}
+                  onChange={(e) => setFormAiModel(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Tom Editorial
+                </label>
+                <select
+                  value={formAiTone}
+                  onChange={(e) => setFormAiTone(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
+                >
+                  <option value="jornalistico">Jornalístico (Neutro & Formal)</option>
+                  <option value="persuasivo">Persuasivo & Envolvente</option>
+                  <option value="analitico">Analítico & Técnico</option>
+                  <option value="didatico">Didático & Explicativo</option>
+                  <option value="descontraido">Descontraído & Informal</option>
+                  <option value="opinativo">Opinativo & Enérgico</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Form Bottom Actions */}
+          <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+            >
+              Cancelar e Voltar
+            </button>
+
+            <div className="flex items-center gap-3">
+              {editingSiteId && (
+                <button
+                  type="button"
+                  onClick={() => handleTestConnection(editingSiteId)}
+                  disabled={testingId === editingSiteId}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 cursor-pointer transition-colors"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${testingId === editingSiteId ? 'animate-spin' : ''}`} />
+                  {testingId === editingSiteId ? 'Testando Conexão...' : 'Testar Conexão Agora'}
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={submitting}
+                className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/25 disabled:opacity-50 cursor-pointer transition-all hover:scale-[1.01]"
+              >
+                <Save className="w-4 h-4" />
+                {submitting ? 'Salvando Configurações...' : 'Salvar Configurações do Site'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: LISTA DE SITES & DASHBOARD PRINCIPAL
+  // ============================================================================
   return (
     <div className="space-y-6">
       {/* Top Banner: Plugin Download & Onboarding */}
@@ -192,7 +827,7 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
               Baixar Plugin (.zip)
             </button>
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={handleOpenCreateScreen}
               className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm border border-slate-700 transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -226,7 +861,7 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
       {actionMessage && (
         <div
-          className={`p-4 rounded-xl text-sm flex items-center justify-between shadow-sm border ${
+          className={`p-4 rounded-xl text-sm flex items-center justify-between shadow-xs border ${
             actionMessage.type === 'success'
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
               : 'bg-rose-50 text-rose-800 border-rose-200'
@@ -235,7 +870,7 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
           <span>{actionMessage.text}</span>
           <button
             onClick={() => setActionMessage(null)}
-            className="text-xs font-semibold underline ml-4 hover:opacity-80"
+            className="text-xs font-semibold underline ml-4 hover:opacity-80 cursor-pointer"
           >
             Fechar
           </button>
@@ -247,19 +882,29 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
         <div>
           <h3 className="text-lg font-bold text-slate-900">Sites Vinculados</h3>
           <p className="text-xs text-slate-500">
-            Gerencie as conexões ativas e configure regras de publicação automática por portal.
+            Gerencie as conexões ativas, selecione fontes alimentadoras e configure diretrizes de IA para cada portal.
           </p>
         </div>
-        <button
-          onClick={() => {
-            fetchSites();
-            fetchLogs();
-          }}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 shadow-sm cursor-pointer"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Atualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              fetchSites();
+              fetchLogs();
+              fetchSources();
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 shadow-xs cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Atualizar
+          </button>
+          <button
+            onClick={handleOpenCreateScreen}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-xs cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Adicionar Site
+          </button>
+        </div>
       </div>
 
       {/* Sites Grid */}
@@ -276,7 +921,7 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
             Cadastre seu primeiro site WordPress para gerar a chave de licença e começar a sincronizar matérias automaticamente.
           </p>
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={handleOpenCreateScreen}
             className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -285,136 +930,176 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {sites.map((site) => (
-            <div
-              key={site.id}
-              className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow p-6 flex flex-col justify-between"
-            >
-              <div>
-                {/* Header Card */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
-                      <Globe className="w-5 h-5" />
+          {sites.map((site) => {
+            const hasSources = Array.isArray(site.sourceIds) && site.sourceIds.length > 0;
+            const hasAiInstructions = Boolean(site.aiCustomInstructions && site.aiCustomInstructions.trim());
+
+            return (
+              <div
+                key={site.id}
+                className="bg-white rounded-2xl border border-slate-200 shadow-xs hover:shadow-md transition-shadow p-6 flex flex-col justify-between"
+              >
+                <div>
+                  {/* Header Card */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                        <Globe className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-base font-bold text-slate-900">{site.siteName}</h4>
+                        <a
+                          href={site.siteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-indigo-600 hover:underline flex items-center gap-1 mt-0.5"
+                        >
+                          {site.siteUrl}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
                     </div>
+
+                    {/* Status Badge */}
                     <div>
-                      <h4 className="text-base font-bold text-slate-900">{site.siteName}</h4>
-                      <a
-                        href={site.siteUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-indigo-600 hover:underline flex items-center gap-1 mt-0.5"
-                      >
-                        {site.siteUrl}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
+                      {site.status === 'connected' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Conectado
+                        </span>
+                      )}
+                      {site.status === 'pending' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          Pendente
+                        </span>
+                      )}
+                      {site.status === 'error' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                          Erro
+                        </span>
+                      )}
+                      {site.status === 'disconnected' && (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                          Desconectado
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  {/* Status Badge */}
-                  <div>
-                    {site.status === 'connected' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        Conectado
+                  {/* License Key Box */}
+                  <div className="mt-5 p-3.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                    <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
+                      <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                        <Key className="w-3.5 h-3.5 text-indigo-500" />
+                        Chave de Licença (API Key)
                       </span>
-                    )}
-                    {site.status === 'pending' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                        Pendente
+                      <button
+                        onClick={() => handleCopyKey(site.apiKey)}
+                        className="text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 cursor-pointer"
+                      >
+                        {copiedKey === site.apiKey ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="text-emerald-600">Copiado!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copiar Chave</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    <div className="font-mono text-xs text-slate-800 bg-white px-3 py-2 rounded-lg border border-slate-200 select-all break-all">
+                      {site.apiKey}
+                    </div>
+                  </div>
+
+                  {/* Config Chips / Badges */}
+                  <div className="mt-4 grid grid-cols-2 gap-2.5 text-xs">
+                    <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Fontes Vinculadas</span>
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
+                        <Radio className="w-3.5 h-3.5 text-indigo-500" />
+                        {hasSources ? `${site.sourceIds!.length} selecionadas` : 'Todas as fontes'}
                       </span>
-                    )}
-                    {site.status === 'error' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-                        Erro
+                    </div>
+
+                    <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Frequência</span>
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
+                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                        {site.publishFrequencyMinutes ? `A cada ${site.publishFrequencyMinutes}min` : 'A cada 60min'}
                       </span>
-                    )}
-                    {site.status === 'disconnected' && (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                        Desconectado
+                    </div>
+
+                    <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Status ao Postar</span>
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5 uppercase">
+                        {site.defaultStatus} {site.autoPublish ? '(Auto)' : '(Manual)'}
                       </span>
-                    )}
+                    </div>
+
+                    <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Diretrizes de IA</span>
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        {hasAiInstructions ? 'Instruções ativas' : 'Padrão editorial'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>
+                      Última sincronização:{' '}
+                      {site.lastSyncAt ? new Date(site.lastSyncAt).toLocaleString('pt-BR') : 'Nunca'}
+                    </span>
                   </div>
                 </div>
 
-                {/* License Key Box */}
-                <div className="mt-5 p-3.5 bg-slate-50 rounded-xl border border-slate-200/80">
-                  <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
-                    <span className="font-semibold text-slate-700 flex items-center gap-1.5">
-                      <Key className="w-3.5 h-3.5 text-indigo-500" />
-                      Chave de Licença (API Key)
-                    </span>
+                {/* Actions Footer */}
+                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => handleCopyKey(site.apiKey)}
-                      className="text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1 cursor-pointer"
+                      type="button"
+                      onClick={() => handleOpenEditScreen(site)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-lg text-white bg-indigo-600 hover:bg-indigo-500 shadow-xs transition-colors cursor-pointer"
                     >
-                      {copiedKey === site.apiKey ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                          <span className="text-emerald-600">Copiado!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>Copiar Chave</span>
-                        </>
-                      )}
+                      <Sliders className="w-3.5 h-3.5" />
+                      Configurar Site
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleTestConnection(site.id)}
+                      disabled={testingId === site.id}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${testingId === site.id ? 'animate-spin' : ''}`} />
+                      {testingId === site.id ? 'Testando...' : 'Testar Conexão'}
                     </button>
                   </div>
-                  <div className="font-mono text-xs text-slate-800 bg-white px-3 py-2 rounded-lg border border-slate-200 select-all break-all">
-                    {site.apiKey}
-                  </div>
-                </div>
 
-                {/* Config Details */}
-                <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-2.5 bg-slate-50 rounded-lg">
-                    <span className="text-slate-500 block">Categoria Padrão</span>
-                    <span className="font-semibold text-slate-800">{site.defaultCategory || 'Geral'}</span>
-                  </div>
-                  <div className="p-2.5 bg-slate-50 rounded-lg">
-                    <span className="text-slate-500 block">Status ao Postar</span>
-                    <span className="font-semibold text-slate-800 uppercase">{site.defaultStatus}</span>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>
-                    Última sincronização:{' '}
-                    {site.lastSyncAt ? new Date(site.lastSyncAt).toLocaleString('pt-BR') : 'Nunca'}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSite(site.id)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                    title="Remover Site"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
-
-              {/* Actions Footer */}
-              <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-                <button
-                  onClick={() => handleTestConnection(site.id)}
-                  disabled={testingId === site.id}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors disabled:opacity-50 cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${testingId === site.id ? 'animate-spin' : ''}`} />
-                  {testingId === site.id ? 'Testando...' : 'Testar Conexão'}
-                </button>
-
-                <button
-                  onClick={() => handleDeleteSite(site.id)}
-                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                  title="Remover Site"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {/* Activity Logs Section */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6">
         <h3 className="text-base font-bold text-slate-900 mb-1">Histórico de Atividades do WordPress</h3>
         <p className="text-xs text-slate-500 mb-4">
           Registro das últimas publicações e checagens de integridade com as REST APIs dos sites.
@@ -465,115 +1150,6 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
           </div>
         )}
       </div>
-
-      {/* Modal: Vincular Novo Site */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">Vincular Novo Site WordPress</h3>
-                <p className="text-xs text-slate-500">Gere uma nova licença e conecte seu blog ou portal.</p>
-              </div>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSite} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Nome do Site
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Portal Notícias Brasil"
-                  value={formSiteName}
-                  onChange={(e) => setFormSiteName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  URL Completa do WordPress
-                </label>
-                <input
-                  type="url"
-                  required
-                  placeholder="https://meuportal.com.br"
-                  value={formSiteUrl}
-                  onChange={(e) => setFormSiteUrl(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Categoria Padrão
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Notícias, Geral..."
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Status Padrão
-                  </label>
-                  <select
-                    value={formStatus}
-                    onChange={(e) => setFormStatus(e.target.value as 'publish' | 'draft')}
-                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
-                  >
-                    <option value="publish">Publicar Imediatamente</option>
-                    <option value="draft">Salvar como Rascunho</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formAutoPublish}
-                    onChange={(e) => setFormAutoPublish(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="text-xs text-slate-700 font-medium">
-                    Habilitar autopublicação direta quando matérias forem mineradas
-                  </span>
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow disabled:opacity-50 cursor-pointer"
-                >
-                  {submitting ? 'Gerando Licença...' : 'Cadastrar e Gerar Licença'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

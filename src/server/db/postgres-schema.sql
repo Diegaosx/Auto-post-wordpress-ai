@@ -78,9 +78,26 @@ CREATE TABLE IF NOT EXISTS wordpress_sites (
   auto_publish BOOLEAN NOT NULL DEFAULT false,
   default_status VARCHAR(32) NOT NULL DEFAULT 'publish',
   default_category VARCHAR(120),
+  source_ids JSONB DEFAULT '[]'::jsonb,
+  categories JSONB DEFAULT '[]'::jsonb,
+  publish_frequency_minutes INTEGER DEFAULT 60,
+  ai_custom_instructions TEXT,
+  ai_provider VARCHAR(64) DEFAULT 'openrouter',
+  ai_model VARCHAR(120),
+  ai_tone VARCHAR(64) DEFAULT 'jornalistico',
+  last_published_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS source_ids JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS categories JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS publish_frequency_minutes INTEGER DEFAULT 60;
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS ai_custom_instructions TEXT;
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS ai_provider VARCHAR(64) DEFAULT 'openrouter';
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS ai_model VARCHAR(120);
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS ai_tone VARCHAR(64) DEFAULT 'jornalistico';
+ALTER TABLE wordpress_sites ADD COLUMN IF NOT EXISTS last_published_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_wp_sites_user_id ON wordpress_sites (user_id);
 CREATE INDEX IF NOT EXISTS idx_wp_sites_api_key ON wordpress_sites (api_key);

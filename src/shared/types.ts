@@ -135,9 +135,14 @@ export interface WordPressSite {
   autoPublish: boolean;
   defaultStatus: 'draft' | 'publish';
   defaultCategory: string | null;
+  sourceIds?: string[];
+  categories?: string[];
+  publishFrequencyMinutes?: number;
+  aiCustomInstructions?: string;
   aiProvider?: LLMProviderId;
   aiModel?: string;
-  aiTone?: 'jornalistico' | 'persuasivo' | 'analitico' | 'didatico';
+  aiTone?: string;
+  lastPublishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -225,7 +230,8 @@ export interface CapturedArticle {
 export interface ArticleRewriteOptions {
   articleId: string;
   tone?: 'jornalistico' | 'persuasivo' | 'analitico' | 'didatico';
-  model?: LLMProviderId;
+  provider?: LLMProviderId;
+  model?: string;
   targetSiteId?: string;
   autoPublish?: boolean;
 }

@@ -2,7 +2,7 @@ import Parser from 'rss-parser';
 import * as cheerio from 'cheerio';
 import { dbRepo } from '../db/repository';
 import { executeLlmPrompt } from './llm-gateway';
-import { CapturedArticle, NewsSource, ArticleRewriteOptions } from '../../shared/types';
+import { CapturedArticle, NewsSource, ArticleRewriteOptions, LLMProviderId } from '../../shared/types';
 import { syncArticleToWordPress } from './wordpress-sync';
 import { extractArticle } from './article-extractor';
 import { uploadArticleJson, uploadFeedJson } from './r2-sync';
@@ -384,10 +384,10 @@ export async function rewriteArticleWithAi(
   }
 
   const tone = options?.tone || targetSite?.aiTone || settings.defaultRewriteTone || 'jornalistico';
-  const provider = options?.model || targetSite?.aiProvider || settings.aiProvider || 'openrouter';
-  const model = targetSite?.aiModel || (provider === 'openrouter' ? settings.openRouterModel : (provider === 'gemini' ? settings.geminiModel : settings.llamaModel));
+  const provider = (options?.provider || targetSite?.aiProvider || settings.aiProvider || 'openrouter') as LLMProviderId;
+  const model = options?.model || targetSite?.aiModel || (provider === 'openrouter' ? settings.openRouterModel : (provider === 'gemini' ? settings.geminiModel : settings.llamaModel));
 
-  const systemPrompt = settings.aiSystemPrompt || `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
+  let systemPrompt = settings.aiSystemPrompt || `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
 Sua missão é transformar a notícia original em uma reportagem 100% autoral, informativa, envolvente e otimizada para os mecanismos de busca.
 REGRAS OBRIGATÓRIAS:
 1. NUNCA faça cópia literal (evite plágio). Reescreva do zero trazendo clareza, contexto e dados.
@@ -402,6 +402,10 @@ REGRAS OBRIGATÓRIAS:
    - "excerpt": string (até 160 caracteres)
    - "keywords": string[] (array de strings)
 Não inclua nenhuma outra palavra ou markdown fora do JSON.`;
+
+  if (targetSite?.aiCustomInstructions && targetSite.aiCustomInstructions.trim()) {
+    systemPrompt += `\n\nDIRETRIZES EDITORIAIS EXCLUSIVAS PARA O SITE "${targetSite.siteName}":\n${targetSite.aiCustomInstructions.trim()}\n(IMPORTANTE: Aplique com prioridade máxima estas diretrizes acima ao recriar o artigo para este site)`;
+  }
 
   const baseContent = (article.cleanText || cleanHtmlTags(article.cleanHtml || '') || article.originalContent || '').slice(0, 4500);
 

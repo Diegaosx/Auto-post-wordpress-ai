@@ -1056,7 +1056,20 @@ async function startServer() {
 
   // Create WordPress Site & Generate License Key
   app.post('/api/wordpress/sites', requireAuth, (req: AuthenticatedRequest, res: Response) => {
-    const { siteName, siteUrl, defaultCategory, defaultStatus, autoPublish } = req.body || {};
+    const {
+      siteName,
+      siteUrl,
+      defaultCategory,
+      defaultStatus,
+      autoPublish,
+      sourceIds,
+      categories,
+      publishFrequencyMinutes,
+      aiCustomInstructions,
+      aiProvider,
+      aiModel,
+      aiTone,
+    } = req.body || {};
 
     if (!siteName || !siteUrl) {
       res.status(400).json({ error: 'Nome do site e URL são obrigatórios.' });
@@ -1075,6 +1088,13 @@ async function startServer() {
       autoPublish: Boolean(autoPublish),
       defaultStatus: defaultStatus === 'publish' ? 'publish' : 'draft',
       defaultCategory: defaultCategory ? sanitizeInput(defaultCategory) : 'Geral',
+      sourceIds: Array.isArray(sourceIds) ? sourceIds : [],
+      categories: Array.isArray(categories) ? categories : [],
+      publishFrequencyMinutes: Number(publishFrequencyMinutes) || 60,
+      aiCustomInstructions: typeof aiCustomInstructions === 'string' ? aiCustomInstructions.trim() : '',
+      aiProvider: aiProvider || 'openrouter',
+      aiModel: aiModel ? sanitizeInput(aiModel) : '',
+      aiTone: aiTone ? sanitizeInput(aiTone) : 'jornalistico',
     });
 
     dbRepo.appendWordPressLog({
@@ -1100,7 +1120,50 @@ async function startServer() {
       return;
     }
 
-    const updated = dbRepo.updateWordPressSite(req.params.id, req.body);
+    const {
+      siteName,
+      siteUrl,
+      defaultCategory,
+      defaultStatus,
+      autoPublish,
+      sourceIds,
+      categories,
+      publishFrequencyMinutes,
+      aiCustomInstructions,
+      aiProvider,
+      aiModel,
+      aiTone,
+      regenerateKey,
+    } = req.body || {};
+
+    const updates: Partial<WordPressSite> = {};
+    if (siteName) updates.siteName = sanitizeInput(siteName);
+    if (siteUrl) updates.siteUrl = sanitizeInput(siteUrl);
+    if (defaultCategory !== undefined) updates.defaultCategory = defaultCategory ? sanitizeInput(defaultCategory) : 'Geral';
+    if (defaultStatus !== undefined) updates.defaultStatus = defaultStatus === 'publish' ? 'publish' : 'draft';
+    if (autoPublish !== undefined) updates.autoPublish = Boolean(autoPublish);
+    if (sourceIds !== undefined) updates.sourceIds = Array.isArray(sourceIds) ? sourceIds : [];
+    if (categories !== undefined) updates.categories = Array.isArray(categories) ? categories : [];
+    if (publishFrequencyMinutes !== undefined) updates.publishFrequencyMinutes = Number(publishFrequencyMinutes) || 60;
+    if (aiCustomInstructions !== undefined) updates.aiCustomInstructions = typeof aiCustomInstructions === 'string' ? aiCustomInstructions.trim() : '';
+    if (aiProvider !== undefined) updates.aiProvider = aiProvider;
+    if (aiModel !== undefined) updates.aiModel = aiModel ? sanitizeInput(aiModel) : '';
+    if (aiTone !== undefined) updates.aiTone = aiTone ? sanitizeInput(aiTone) : 'jornalistico';
+
+    if (regenerateKey) {
+      updates.apiKey = `APAI-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    }
+
+    const updated = dbRepo.updateWordPressSite(req.params.id, updates);
+
+    dbRepo.appendWordPressLog({
+      siteId: site.id,
+      siteName: updated?.siteName || site.siteName,
+      action: 'SITE_CONFIG_UPDATED',
+      status: 'success',
+      message: `Configurações do site atualizadas (Fontes: ${updated?.sourceIds?.length || 0}, Frequência: ${updated?.publishFrequencyMinutes || 60}min)`,
+    });
+
     res.json(updated);
   });
 
@@ -1447,6 +1510,44 @@ async function startServer() {
               await scrapeSource(s.id);
             } catch (err: any) {
               console.warn(`[Collector Background] Erro ao coletar fonte "${s.name}" (${s.id}):`, err.message);
+            }
+          }
+        }
+
+        // 2. Publicação agendada e autônoma para Sites WordPress
+        const wpSites = dbRepo.getWordPressSites().filter((site) => site.autoPublish && site.status === 'connected');
+        for (const site of wpSites) {
+          const siteFreqMs = (site.publishFrequencyMinutes || 60) * 60 * 1000;
+          const lastPubTime = site.lastPublishedAt ? new Date(site.lastPublishedAt).getTime() : 0;
+
+          if (now - lastPubTime >= siteFreqMs) {
+            const allowedSources = site.sourceIds && site.sourceIds.length > 0 ? site.sourceIds : null;
+            const articles = dbRepo.getCapturedArticles({ limit: 100 });
+
+            // Encontrar o artigo mais recente elegível que ainda não foi postado neste site
+            const candidate = articles.find((art) => {
+              const matchesSource = !allowedSources || allowedSources.includes(art.sourceId);
+              const alreadyPosted = art.wpSiteId === site.id;
+              return matchesSource && !alreadyPosted;
+            });
+
+            if (candidate) {
+              console.log(`[Auto-Publisher] Publicação automática agendada para site "${site.siteName}": "${candidate.originalTitle.slice(0, 35)}..."`);
+              try {
+                let readyArticle = candidate;
+                if (!candidate.aiContent) {
+                  readyArticle = await rewriteArticleWithAi(candidate.id, {
+                    targetSiteId: site.id,
+                    tone: site.aiTone as any,
+                    provider: site.aiProvider,
+                    model: site.aiModel,
+                  });
+                }
+                await syncArticleToWordPress(readyArticle.id, site.id);
+                dbRepo.updateWordPressSite(site.id, { lastPublishedAt: new Date().toISOString() });
+              } catch (pubErr: any) {
+                console.warn(`[Auto-Publisher] Erro ao sincronizar artigo no site "${site.siteName}":`, pubErr.message);
+              }
             }
           }
         }
