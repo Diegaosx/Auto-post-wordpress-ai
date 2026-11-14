@@ -13,13 +13,14 @@ export interface R2Config {
 export async function getR2Config(): Promise<R2Config | null> {
   const settings = dbRepo.getSystemSettings();
 
-  const accountId = settings.r2AccountId || process.env.R2_ACCOUNT_ID || '4830cafc5dff5d7c50b8623b89b9b8c9';
-  const accessKeyId = settings.r2AccessKeyId || process.env.R2_ACCESS_KEY_ID || 'f60e9da5ad3f0eeabab24de5dc987edf';
-  const secretAccessKey = settings.r2SecretAccessKey || process.env.R2_SECRET_ACCESS_KEY || '98d4417c42008d3bfc726ddab4a32d46d2612f164cc5b14e82acca5401a598b0';
-  const bucketName = settings.r2BucketName || process.env.R2_BUCKET_NAME || 'cdn-imagens';
-  let rawPublicUrl = settings.r2PublicUrl || process.env.R2_PUBLIC_URL || 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br';
+  const accountId = process.env.R2_ACCOUNT_ID || settings.r2AccountId || '';
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID || settings.r2AccessKeyId || '';
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || settings.r2SecretAccessKey || '';
+  const bucketName = process.env.R2_BUCKET_NAME || settings.r2BucketName || '';
+  const rawPublicUrl = process.env.R2_PUBLIC_URL || settings.r2PublicUrl || '';
 
   if (!accountId || !accessKeyId || !secretAccessKey || !bucketName) {
+    console.warn('[R2 Sync] Credenciais Cloudflare R2 ausentes nas variáveis de ambiente (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME).');
     return null;
   }
 
@@ -274,8 +275,8 @@ export async function testR2Connection(customConfig?: Partial<R2Config>): Promis
         accountId: customConfig.accountId,
         accessKeyId: customConfig.accessKeyId || '',
         secretAccessKey: customConfig.secretAccessKey || '',
-        bucketName: customConfig.bucketName || 'cdn-imagens',
-        publicUrl: (customConfig.publicUrl || 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br').replace(/\/+$/, ''),
+        bucketName: customConfig.bucketName || process.env.R2_BUCKET_NAME || '',
+        publicUrl: (customConfig.publicUrl || process.env.R2_PUBLIC_URL || '').replace(/\/+$/, ''),
       }
     : await getR2Config();
 

@@ -64,13 +64,14 @@ export const env = {
   LLAMA_API_KEY: process.env.LLAMA_API_KEY || '',
   LLAMA_DEFAULT_MODEL: process.env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile',
 
-  // Cloudflare R2 Edge Storage
-  R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || '4830cafc5dff5d7c50b8623b89b9b8c9',
-  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || 'f60e9da5ad3f0eeabab24de5dc987edf',
-  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || '98d4417c42008d3bfc726ddab4a32d46d2612f164cc5b14e82acca5401a598b0',
-  R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || 'cdn-imagens',
-  R2_PUBLIC_URL: process.env.R2_PUBLIC_URL || 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br',
+  // Cloudflare R2 Edge Storage (100% via variáveis de ambiente)
+  R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || '',
+  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || '',
+  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || '',
+  R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || '',
+  R2_PUBLIC_URL: process.env.R2_PUBLIC_URL || '',
   COLLECTOR_INTERVAL_MINUTES: parseNumber(process.env.COLLECTOR_INTERVAL_MINUTES, 5),
+  TZ: process.env.TZ || 'America/Recife',
 
   // SMTP & Resend Mail Configuration
   MAIL_PROVIDER: (process.env.MAIL_PROVIDER === 'smtp' ? 'smtp' : 'resend') as 'resend' | 'smtp',

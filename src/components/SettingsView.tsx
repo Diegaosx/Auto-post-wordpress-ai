@@ -70,8 +70,8 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     r2AccountId: '',
     r2AccessKeyId: '',
     r2SecretAccessKey: '',
-    r2BucketName: 'cdn-imagens',
-    r2PublicUrl: 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br',
+    r2BucketName: '',
+    r2PublicUrl: '',
     r2AutoSync: true,
   });
 
@@ -117,8 +117,8 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           r2AccountId: data.r2AccountId || '',
           r2AccessKeyId: data.r2AccessKeyId || '',
           r2SecretAccessKey: '',
-          r2BucketName: data.r2BucketName || 'cdn-imagens',
-          r2PublicUrl: data.r2PublicUrl || 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br',
+          r2BucketName: data.r2BucketName || '',
+          r2PublicUrl: data.r2PublicUrl || '',
           r2AutoSync: data.r2AutoSync ?? true,
         });
         setHasKeys({

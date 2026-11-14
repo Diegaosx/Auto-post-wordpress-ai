@@ -28,11 +28,11 @@ const { Pool } = pg;
 // CONFIGURAÇÕES E CLIENTS
 // ============================================================================
 const DATABASE_URL = process.env.DATABASE_URL || '';
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '4830cafc5dff5d7c50b8623b89b9b8c9';
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || 'f60e9da5ad3f0eeabab24de5dc987edf';
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '98d4417c42008d3bfc726ddab4a32d46d2612f164cc5b14e82acca5401a598b0';
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'cdn-imagens';
-const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || 'https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br').replace(/\/+$/, '');
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID || '';
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID || '';
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY || '';
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || '';
+const R2_PUBLIC_URL = (process.env.R2_PUBLIC_URL || '').replace(/\/+$/, '');
 const INTERVAL_MINUTES = parseInt(process.env.COLLECTOR_INTERVAL_MINUTES || '5', 10);
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
