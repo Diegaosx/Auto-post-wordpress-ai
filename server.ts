@@ -1450,13 +1450,14 @@ async function startServer() {
   });
 
   app.post('/api/settings/ai/test', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-    const { provider, apiKey, model } = req.body || {};
+    const { provider, apiKey, model, baseUrl } = req.body || {};
 
     try {
       const result = await executeLlmPrompt({
         provider,
         apiKey: apiKey?.trim() || undefined,
         model: model?.trim() || undefined,
+        baseUrl: baseUrl?.trim() || undefined,
         prompt: 'Responda estritamente esta frase: "OK - Motor de IA conectado com sucesso."',
       });
 

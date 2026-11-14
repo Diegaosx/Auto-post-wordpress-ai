@@ -47,6 +47,8 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     error?: string;
   } | null>(null);
 
+  const [selectedAiTab, setSelectedAiTab] = useState<LLMProviderId>('openrouter');
+
   const [form, setForm] = useState<SystemSettings>({
     platformName: 'Auto Post WordPress AI',
     platformTagline: 'Automação editorial com IA e sincronização WordPress',
@@ -94,13 +96,14 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
       });
       if (res.ok) {
         const data = await res.json();
+        const activeProv = (data.aiProvider as LLMProviderId) || 'openrouter';
         setForm({
           platformName: data.platformName || 'Auto Post WordPress AI',
           platformTagline: data.platformTagline || 'Automação editorial com IA e sincronização WordPress',
           browserTitle: data.browserTitle || 'Auto Post WordPress AI — Painel Editorial',
           logoText: data.logoText || 'AP',
           logoUrl: data.logoUrl || '',
-          aiProvider: data.aiProvider || 'openrouter',
+          aiProvider: activeProv,
           openRouterApiKey: '',
           openRouterModel: data.openRouterModel || 'openai/gpt-4o-mini',
           openRouterBaseUrl: data.openRouterBaseUrl || 'https://openrouter.ai/api/v1',
@@ -127,6 +130,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           llama: Boolean(data.hasLlamaKey),
           r2: Boolean(data.hasR2Configured),
         });
+        setSelectedAiTab(activeProv);
       }
     } catch {
       setFeedback({ type: 'error', message: 'Erro ao carregar configurações do servidor.' });
@@ -224,19 +228,22 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     setTestingAi(true);
     setTestResult(null);
 
-    const activeProvider = form.aiProvider;
+    const targetProvider = selectedAiTab;
     let apiKey = '';
     let model = '';
+    let baseUrl = '';
 
-    if (activeProvider === 'openrouter') {
+    if (targetProvider === 'openrouter') {
       apiKey = form.openRouterApiKey || '';
       model = form.openRouterModel || '';
-    } else if (activeProvider === 'gemini') {
+      baseUrl = form.openRouterBaseUrl || '';
+    } else if (targetProvider === 'gemini') {
       apiKey = form.geminiApiKey || '';
       model = form.geminiModel || '';
     } else {
       apiKey = form.llamaApiKey || '';
       model = form.llamaModel || '';
+      baseUrl = form.llamaBaseUrl || '';
     }
 
     try {
@@ -247,9 +254,10 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          provider: activeProvider,
+          provider: targetProvider,
           apiKey: apiKey || undefined,
           model: model || undefined,
+          baseUrl: baseUrl || undefined,
         }),
       });
 
@@ -446,93 +454,214 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           <div className="p-5 space-y-5">
             {/* Escolha do Provedor Ativo */}
             <div>
-              <label className="block text-xs font-semibold text-slate-800 mb-2">
-                Provedor de IA Padrão para Reescrita de Notícias
-              </label>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
+                <label className="block text-xs font-semibold text-slate-800">
+                  Provedor de IA Padrão para Reescrita de Notícias
+                </label>
+                <span className="text-[11px] text-slate-500">
+                  Apenas 1 motor opera como <strong className="text-emerald-700 font-semibold">Ativo</strong> por vez; os demais mantêm seus dados salvos.
+                </span>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Opção OpenRouter */}
                 <div
-                  onClick={() => setForm({ ...form, aiProvider: 'openrouter' })}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-all ${
-                    form.aiProvider === 'openrouter'
-                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600'
+                  onClick={() => setSelectedAiTab('openrouter')}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedAiTab === 'openrouter'
+                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Cpu className="w-3.5 h-3.5 text-indigo-600" />
-                      OpenRouter
-                    </span>
-                    {hasKeys.openRouter && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-medium">
-                        Ativo
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Cpu className="w-3.5 h-3.5 text-indigo-600" />
+                        OpenRouter
                       </span>
+                      {form.aiProvider === 'openrouter' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold border border-emerald-300 shadow-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                          Ativo
+                        </span>
+                      ) : hasKeys.openRouter ? (
+                        <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-medium border border-slate-200">
+                          Salvo
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">
+                          Não configurado
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Acesso a mais de 200+ modelos (GPT-4o, Claude 3.5, DeepSeek V3, Llama 3.3).
+                    </p>
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-slate-100">
+                    {form.aiProvider === 'openrouter' ? (
+                      <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        Motor Ativo em Produção
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setForm({ ...form, aiProvider: 'openrouter' });
+                          setSelectedAiTab('openrouter');
+                        }}
+                        className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
+                      >
+                        Ativar este Motor
+                      </button>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Acesso a mais de 200+ modelos (GPT-4o, Claude 3.5, DeepSeek V3, Llama 3.3).
-                  </p>
                 </div>
 
                 {/* Opção Google Gemini */}
                 <div
-                  onClick={() => setForm({ ...form, aiProvider: 'gemini' })}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-all ${
-                    form.aiProvider === 'gemini'
-                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600'
+                  onClick={() => setSelectedAiTab('gemini')}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedAiTab === 'gemini'
+                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Bot className="w-3.5 h-3.5 text-indigo-600" />
-                      Google Gemini
-                    </span>
-                    {hasKeys.gemini && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-medium">
-                        Ativo
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Bot className="w-3.5 h-3.5 text-indigo-600" />
+                        Google Gemini
                       </span>
+                      {form.aiProvider === 'gemini' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold border border-emerald-300 shadow-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                          Ativo
+                        </span>
+                      ) : hasKeys.gemini ? (
+                        <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-medium border border-slate-200">
+                          Salvo
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">
+                          Não configurado
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      SDK nativo oficial do Google com alta velocidade e janela de contexto estendida.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-slate-100">
+                    {form.aiProvider === 'gemini' ? (
+                      <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        Motor Ativo em Produção
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setForm({ ...form, aiProvider: 'gemini' });
+                          setSelectedAiTab('gemini');
+                        }}
+                        className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
+                      >
+                        Ativar este Motor
+                      </button>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    SDK nativo oficial do Google com alta velocidade e janela de contexto estendida.
-                  </p>
                 </div>
 
                 {/* Opção Llama / Groq / Ollama */}
                 <div
-                  onClick={() => setForm({ ...form, aiProvider: 'llama' })}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-all ${
-                    form.aiProvider === 'llama'
-                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600'
+                  onClick={() => setSelectedAiTab('llama')}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedAiTab === 'llama'
+                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
                       : 'border-slate-200 hover:border-slate-300 bg-white'
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Terminal className="w-3.5 h-3.5 text-indigo-600" />
-                      Groq / Ollama / Custom
-                    </span>
-                    {hasKeys.llama && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-medium">
-                        Ativo
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Terminal className="w-3.5 h-3.5 text-indigo-600" />
+                        Groq / Ollama / Custom
                       </span>
+                      {form.aiProvider === 'llama' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold border border-emerald-300 shadow-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                          Ativo
+                        </span>
+                      ) : hasKeys.llama ? (
+                        <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-medium border border-slate-200">
+                          Salvo
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">
+                          Não configurado
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Endpoints padrão OpenAI-compatible, Groq ultra-rápido ou servidor Ollama local.
+                    </p>
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-slate-100">
+                    {form.aiProvider === 'llama' ? (
+                      <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        Motor Ativo em Produção
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setForm({ ...form, aiProvider: 'llama' });
+                          setSelectedAiTab('llama');
+                        }}
+                        className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
+                      >
+                        Ativar este Motor
+                      </button>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Endpoints padrão OpenAI-compatible, Groq ultra-rápido ou servidor Ollama local.
-                  </p>
                 </div>
               </div>
             </div>
 
-            {/* Painel Específico do Provedor Selecionado */}
-            {form.aiProvider === 'openrouter' && (
+            {/* Painel Específico do Provedor Selecionado para Edição */}
+            {selectedAiTab === 'openrouter' && (
               <div className="p-4 bg-indigo-50/30 rounded-lg border border-indigo-100 space-y-3.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
-                  <Key className="w-3.5 h-3.5 text-indigo-600" />
-                  Credenciais e Modelo do OpenRouter
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-indigo-100/70">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                    <Key className="w-3.5 h-3.5 text-indigo-600" />
+                    Credenciais e Modelo do OpenRouter
+                  </div>
+                  {form.aiProvider === 'openrouter' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Motor Ativo no Sistema (Reescrita Oficial)
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500">Credenciais Salvas (Motor Inativo)</span>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, aiProvider: 'openrouter' })}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                      >
+                        Definir como Motor Ativo
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -544,7 +673,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                     value={form.openRouterApiKey}
                     onChange={(e) => setForm({ ...form, openRouterApiKey: e.target.value })}
                     className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-indigo-500"
-                    placeholder={hasKeys.openRouter ? '•••••••••••••••••••••••• (deixe vazio para manter)' : 'sk-or-v1-...'}
+                    placeholder={hasKeys.openRouter ? '•••••••••••••••••••••••• (deixe vazio para manter a salva)' : 'sk-or-v1-...'}
                   />
                   <p className="text-[10px] text-slate-500 mt-1">
                     Obtenha sua chave em <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-indigo-600 underline">openrouter.ai/keys</a>.
@@ -597,11 +726,30 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
               </div>
             )}
 
-            {form.aiProvider === 'gemini' && (
+            {selectedAiTab === 'gemini' && (
               <div className="p-4 bg-indigo-50/30 rounded-lg border border-indigo-100 space-y-3.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
-                  <Key className="w-3.5 h-3.5 text-indigo-600" />
-                  Credenciais e Modelo do Google Gemini
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-indigo-100/70">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                    <Key className="w-3.5 h-3.5 text-indigo-600" />
+                    Credenciais e Modelo do Google Gemini
+                  </div>
+                  {form.aiProvider === 'gemini' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Motor Ativo no Sistema (Reescrita Oficial)
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500">Credenciais Salvas (Motor Inativo)</span>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, aiProvider: 'gemini' })}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                      >
+                        Definir como Motor Ativo
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -613,7 +761,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                     value={form.geminiApiKey}
                     onChange={(e) => setForm({ ...form, geminiApiKey: e.target.value })}
                     className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-indigo-500"
-                    placeholder={hasKeys.gemini ? '•••••••••••••••••••••••• (deixe vazio para manter)' : 'AIzaSy...'}
+                    placeholder={hasKeys.gemini ? '•••••••••••••••••••••••• (deixe vazio para manter a salva)' : 'AIzaSy...'}
                   />
                 </div>
 
@@ -648,11 +796,30 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
               </div>
             )}
 
-            {form.aiProvider === 'llama' && (
+            {selectedAiTab === 'llama' && (
               <div className="p-4 bg-indigo-50/30 rounded-lg border border-indigo-100 space-y-3.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
-                  <Key className="w-3.5 h-3.5 text-indigo-600" />
-                  Credenciais e Endpoint Groq / Ollama / Custom
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-indigo-100/70">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                    <Key className="w-3.5 h-3.5 text-indigo-600" />
+                    Credenciais e Endpoint Groq / Ollama / Custom
+                  </div>
+                  {form.aiProvider === 'llama' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Motor Ativo no Sistema (Reescrita Oficial)
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500">Credenciais Salvas (Motor Inativo)</span>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, aiProvider: 'llama' })}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                      >
+                        Definir como Motor Ativo
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -664,7 +831,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                     value={form.llamaApiKey}
                     onChange={(e) => setForm({ ...form, llamaApiKey: e.target.value })}
                     className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
-                    placeholder={hasKeys.llama ? '••••••••••••••••••••••••' : 'gsk_... ou chave local'}
+                    placeholder={hasKeys.llama ? '•••••••••••••••••••••••• (deixe vazio para manter a salva)' : 'gsk_... ou chave local'}
                   />
                 </div>
 
@@ -708,7 +875,11 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-60 cursor-pointer"
                 >
                   {testingAi ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
-                  <span>{testingAi ? 'Testando Conexão...' : 'Testar Conexão com a IA Agora'}</span>
+                  <span>
+                    {testingAi
+                      ? 'Testando Conexão...'
+                      : `Testar Conexão (${selectedAiTab === 'gemini' ? 'Google Gemini' : selectedAiTab === 'openrouter' ? 'OpenRouter' : 'Groq / Custom'}) Agora`}
+                  </span>
                 </button>
               </div>
 

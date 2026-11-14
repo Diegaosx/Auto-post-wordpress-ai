@@ -23,6 +23,7 @@ export async function executeLlmPrompt(params: {
   systemInstruction?: string;
   model?: string;
   apiKey?: string;
+  baseUrl?: string;
   temperature?: number;
 }): Promise<LLMExecutionResult> {
   const start = Date.now();
@@ -38,7 +39,7 @@ export async function executeLlmPrompt(params: {
   if (provider === 'openrouter') {
     const apiKey = params.apiKey || settings.openRouterApiKey || env.OPENROUTER_API_KEY;
     const modelName = params.model || settings.openRouterModel || env.OPENROUTER_DEFAULT_MODEL || 'openai/gpt-4o-mini';
-    const baseUrl = settings.openRouterBaseUrl || env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+    const baseUrl = params.baseUrl || settings.openRouterBaseUrl || env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 
     if (apiKey) {
       try {
@@ -158,7 +159,7 @@ export async function executeLlmPrompt(params: {
   // 3. META LLAMA / GROQ / OLLAMA / OPENAI-COMPATIBLE
   // ==========================================================================
   const apiKey = params.apiKey || settings.llamaApiKey || env.LLAMA_API_KEY;
-  const baseUrl = settings.llamaBaseUrl || env.LLAMA_API_BASE_URL || 'https://api.groq.com/openai/v1';
+  const baseUrl = params.baseUrl || settings.llamaBaseUrl || env.LLAMA_API_BASE_URL || 'https://api.groq.com/openai/v1';
   const llamaModel = params.model || settings.llamaModel || env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile';
 
   if (apiKey) {
