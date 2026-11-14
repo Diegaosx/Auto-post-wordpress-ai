@@ -10,7 +10,7 @@ import {
   LLMProviderId,
 } from '../shared/types';
 import { translations } from '../shared/i18n';
-import { Search, Play, RefreshCw } from 'lucide-react';
+import { Search, Play, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface DashboardViewProps {
   token: string;
@@ -30,6 +30,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [logCategory, setLogCategory] = useState<string>('all');
   const [logSearch, setLogSearch] = useState<string>('');
+  const [logPage, setLogPage] = useState<number>(1);
+  const [logPageSize, setLogPageSize] = useState<number>(15);
   const [infra, setInfra] = useState<InfrastructureStatus | null>(null);
   const [recentJobs, setRecentJobs] = useState<QueueJobRecord[]>([]);
 
@@ -66,7 +68,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
     if (!isAdmin) return;
     const [logsRes, infraRes] = await Promise.all([
       fetch(
-        `/api/logs?category=${encodeURIComponent(logCategory)}&search=${encodeURIComponent(logSearch)}`,
+        `/api/logs?category=${encodeURIComponent(logCategory)}&search=${encodeURIComponent(logSearch)}&limit=500`,
         { headers: { Authorization: `Bearer ${token}` } }
       ),
       fetch('/api/infra/status', {
@@ -200,6 +202,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
     210
   );
   const maxLogins = Math.max(...series.map((s) => s.loginsCount), 10);
+
+  // Audit Logs Pagination
+  const totalAuditLogs = logs.length;
+  const totalAuditPages = Math.ceil(totalAuditLogs / logPageSize) || 1;
+  const safeAuditPage = Math.min(logPage, totalAuditPages);
+  const auditStartIndex = (safeAuditPage - 1) * logPageSize;
+  const pagedAuditLogs = logs.slice(auditStartIndex, auditStartIndex + logPageSize);
 
   return (
     <div className="space-y-8">
@@ -614,7 +623,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
                     type="search"
                     aria-label={t.dashboard.logsSearchPlaceholder}
                     value={logSearch}
-                    onChange={(e) => setLogSearch(e.target.value)}
+                    onChange={(e) => {
+                      setLogSearch(e.target.value);
+                      setLogPage(1);
+                    }}
                     placeholder={t.dashboard.logsSearchPlaceholder}
                     className="pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:border-slate-900 w-full sm:w-64"
                   />
@@ -623,7 +635,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
                 <select
                   aria-label="Filter log category"
                   value={logCategory}
-                  onChange={(e) => setLogCategory(e.target.value)}
+                  onChange={(e) => {
+                    setLogCategory(e.target.value);
+                    setLogPage(1);
+                  }}
                   className="px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-none focus:border-slate-900 text-slate-700"
                 >
                   <option value="all">{t.dashboard.logsFilterAll}</option>
@@ -635,6 +650,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
                   <option value="llm">llm</option>
                   <option value="mail">mail</option>
                   <option value="webhook">webhook</option>
+                  <option value="wordpress">wordpress</option>
+                  <option value="scraping">scraping</option>
                 </select>
               </div>
             </div>
@@ -654,14 +671,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 text-xs">
-                  {logs.length === 0 ? (
+                  {totalAuditLogs === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-8 text-center text-slate-500">
                         {t.dashboard.logsEmpty}
                       </td>
                     </tr>
                   ) : (
-                    logs.slice(0, 25).map((log) => (
+                    pagedAuditLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-2.5 px-4 font-mono text-[11px] text-slate-500 tabular-nums whitespace-nowrap">
                           {new Date(log.timestamp).toLocaleTimeString(locale, {
@@ -707,6 +724,93 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ token, user, local
                 </tbody>
               </table>
             </div>
+
+            {/* Audit Logs Pagination Controls */}
+            {totalAuditLogs > 0 && (
+              <div className="p-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 bg-slate-50/50">
+                <div>
+                  {locale === 'en' ? (
+                    <>
+                      Showing <strong className="text-slate-800">{auditStartIndex + 1}</strong> to{' '}
+                      <strong className="text-slate-800">{Math.min(auditStartIndex + logPageSize, totalAuditLogs)}</strong> of{' '}
+                      <strong className="text-slate-800">{totalAuditLogs}</strong> records
+                    </>
+                  ) : locale === 'es' ? (
+                    <>
+                      Mostrando <strong className="text-slate-800">{auditStartIndex + 1}</strong> a{' '}
+                      <strong className="text-slate-800">{Math.min(auditStartIndex + logPageSize, totalAuditLogs)}</strong> de{' '}
+                      <strong className="text-slate-800">{totalAuditLogs}</strong> registros
+                    </>
+                  ) : (
+                    <>
+                      Mostrando <strong className="text-slate-800">{auditStartIndex + 1}</strong> a{' '}
+                      <strong className="text-slate-800">{Math.min(auditStartIndex + logPageSize, totalAuditLogs)}</strong> de{' '}
+                      <strong className="text-slate-800">{totalAuditLogs}</strong> registros
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setLogPage((p) => Math.max(1, p - 1))}
+                    disabled={safeAuditPage === 1}
+                    className="px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer font-medium text-slate-700 bg-white"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    {locale === 'en' ? 'Previous' : locale === 'es' ? 'Anterior' : 'Anterior'}
+                  </button>
+
+                  {Array.from({ length: totalAuditPages }, (_, i) => i + 1)
+                    .filter((page) => page === 1 || page === totalAuditPages || Math.abs(page - safeAuditPage) <= 1)
+                    .map((page, idx, arr) => {
+                      const prev = arr[idx - 1];
+                      return (
+                        <React.Fragment key={page}>
+                          {prev && page - prev > 1 && (
+                            <span className="px-1 text-slate-400">...</span>
+                          )}
+                          <button
+                            onClick={() => setLogPage(page)}
+                            className={`min-w-8 h-8 px-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                              safeAuditPage === page
+                                ? 'bg-slate-900 text-white'
+                                : 'border border-slate-200 hover:bg-slate-100 text-slate-700 bg-white'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        </React.Fragment>
+                      );
+                    })}
+
+                  <button
+                    onClick={() => setLogPage((p) => Math.min(totalAuditPages, p + 1))}
+                    disabled={safeAuditPage === totalAuditPages}
+                    className="px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer font-medium text-slate-700 bg-white"
+                  >
+                    {locale === 'en' ? 'Next' : locale === 'es' ? 'Siguiente' : 'Próximo'}
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span>{locale === 'en' ? 'Per page:' : locale === 'es' ? 'Por página:' : 'Por página:'}</span>
+                  <select
+                    value={logPageSize}
+                    onChange={(e) => {
+                      setLogPageSize(Number(e.target.value));
+                      setLogPage(1);
+                    }}
+                    className="px-2 py-1 border border-slate-200 rounded-md text-xs bg-white text-slate-700 focus:ring-1 focus:ring-slate-900 focus:outline-none"
+                  >
+                    <option value={10}>10</option>
+                    <option value={15}>15</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}

@@ -305,7 +305,7 @@ class PostgresRepository {
     }));
 
     // Audit Logs
-    const logsRes = await this.pool.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 300');
+    const logsRes = await this.pool.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 1000');
     if (logsRes.rows.length > 0) {
       this.state.auditLogs = logsRes.rows.map((r: any) => ({
         id: r.id,
@@ -704,7 +704,7 @@ class PostgresRepository {
           l.ipAddress.toLowerCase().includes(q)
       );
     }
-    return logs.slice(0, params?.limit ?? 100);
+    return logs.slice(0, params?.limit ?? 500);
   }
 
   public getDashboardSummary(days = 30): DashboardSummary {
@@ -898,7 +898,7 @@ class PostgresRepository {
     return newLog;
   }
 
-  public getWordPressLogs(siteId?: string, limit = 50): WordPressLog[] {
+  public getWordPressLogs(siteId?: string, limit = 500): WordPressLog[] {
     if (!this.state.wpLogs) this.state.wpLogs = [];
     let list = this.state.wpLogs;
     if (siteId) {

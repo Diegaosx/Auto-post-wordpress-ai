@@ -26,6 +26,10 @@ import {
   HelpCircle,
   FileText,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  Filter,
 } from 'lucide-react';
 
 interface WordPressSitesViewProps {
@@ -62,6 +66,13 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
   const [formAiTone, setFormAiTone] = useState('jornalistico');
   const [regenerateKeyOnSave, setRegenerateKeyOnSave] = useState(false);
 
+  // WordPress Activity Logs State (Pagination & Filters)
+  const [logPage, setLogPage] = useState<number>(1);
+  const [logPageSize, setLogPageSize] = useState<number>(10);
+  const [logSearch, setLogSearch] = useState<string>('');
+  const [logSiteFilter, setLogSiteFilter] = useState<string>('all');
+  const [logStatusFilter, setLogStatusFilter] = useState<string>('all');
+
   const fetchSites = async () => {
     try {
       const res = await fetch('/api/wordpress/sites', {
@@ -78,7 +89,7 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
   const fetchLogs = async () => {
     try {
-      const res = await fetch('/api/wordpress/logs?limit=15', {
+      const res = await fetch('/api/wordpress/logs?limit=500', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -1100,55 +1111,217 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
       {/* Activity Logs Section */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6">
-        <h3 className="text-base font-bold text-slate-900 mb-1">Histórico de Atividades do WordPress</h3>
-        <p className="text-xs text-slate-500 mb-4">
-          Registro das últimas publicações e checagens de integridade com as REST APIs dos sites.
-        </p>
-
-        {logs.length === 0 ? (
-          <div className="text-xs text-slate-400 py-6 text-center">Nenhum evento registrado ainda.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-3 font-semibold">Data/Hora</th>
-                  <th className="py-2.5 px-3 font-semibold">Site</th>
-                  <th className="py-2.5 px-3 font-semibold">Ação</th>
-                  <th className="py-2.5 px-3 font-semibold">Status</th>
-                  <th className="py-2.5 px-3 font-semibold">Mensagem</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-3 whitespace-nowrap text-slate-500">
-                      {new Date(log.timestamp).toLocaleString('pt-BR')}
-                    </td>
-                    <td className="py-2.5 px-3 font-medium text-slate-900">{log.siteName || log.siteId}</td>
-                    <td className="py-2.5 px-3 font-mono text-[11px]">{log.action}</td>
-                    <td className="py-2.5 px-3">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
-                          log.status === 'success'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : log.status === 'warning'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-rose-100 text-rose-800'
-                        }`}
-                      >
-                        {log.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 max-w-md truncate" title={log.message}>
-                      {log.message}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 mb-0.5">Histórico de Atividades do WordPress</h3>
+            <p className="text-xs text-slate-500">
+              Registro das publicações automáticas e checagens de integridade com as REST APIs dos sites.
+            </p>
           </div>
-        )}
+
+          {/* Search & Filters */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="search"
+                value={logSearch}
+                onChange={(e) => {
+                  setLogSearch(e.target.value);
+                  setLogPage(1);
+                }}
+                placeholder="Buscar no histórico..."
+                className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 w-44 sm:w-56"
+              />
+            </div>
+
+            <select
+              value={logSiteFilter}
+              onChange={(e) => {
+                setLogSiteFilter(e.target.value);
+                setLogPage(1);
+              }}
+              className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 text-slate-700 font-medium"
+            >
+              <option value="all">Todos os Sites</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.siteName}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={logStatusFilter}
+              onChange={(e) => {
+                setLogStatusFilter(e.target.value);
+                setLogPage(1);
+              }}
+              className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500 text-slate-700 font-medium"
+            >
+              <option value="all">Todos os Status</option>
+              <option value="success">Sucesso</option>
+              <option value="warning">Aviso</option>
+              <option value="error">Erro</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => fetchLogs()}
+              title="Atualizar Logs"
+              className="p-1.5 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {(() => {
+          const filteredLogs = logs.filter((log) => {
+            if (logSiteFilter !== 'all' && log.siteId !== logSiteFilter && log.siteName !== logSiteFilter) {
+              return false;
+            }
+            if (logStatusFilter !== 'all' && log.status !== logStatusFilter) {
+              return false;
+            }
+            if (logSearch.trim()) {
+              const q = logSearch.toLowerCase();
+              const match =
+                (log.siteName || '').toLowerCase().includes(q) ||
+                (log.action || '').toLowerCase().includes(q) ||
+                (log.message || '').toLowerCase().includes(q);
+              if (!match) return false;
+            }
+            return true;
+          });
+
+          const totalWpLogs = filteredLogs.length;
+          const totalWpLogPages = Math.ceil(totalWpLogs / logPageSize) || 1;
+          const safeWpLogPage = Math.min(logPage, totalWpLogPages);
+          const wpLogStartIndex = (safeWpLogPage - 1) * logPageSize;
+          const pagedWpLogs = filteredLogs.slice(wpLogStartIndex, wpLogStartIndex + logPageSize);
+
+          if (totalWpLogs === 0) {
+            return (
+              <div className="text-xs text-slate-400 py-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                Nenhum evento registrado com os filtros aplicados.
+              </div>
+            );
+          }
+
+          return (
+            <>
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-3 font-semibold">Data/Hora</th>
+                      <th className="py-2.5 px-3 font-semibold">Site</th>
+                      <th className="py-2.5 px-3 font-semibold">Ação</th>
+                      <th className="py-2.5 px-3 font-semibold">Status</th>
+                      <th className="py-2.5 px-3 font-semibold">Mensagem</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {pagedWpLogs.map((log) => (
+                      <tr key={log.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-2.5 px-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
+                          {new Date(log.timestamp).toLocaleString('pt-BR')}
+                        </td>
+                        <td className="py-2.5 px-3 font-semibold text-slate-900">{log.siteName || log.siteId}</td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] font-medium text-indigo-700">{log.action}</td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
+                              log.status === 'success'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : log.status === 'warning'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {log.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 max-w-md truncate" title={log.message}>
+                          {log.message}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="pt-4 mt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+                <div>
+                  Mostrando <strong className="text-slate-800">{wpLogStartIndex + 1}</strong> a{' '}
+                  <strong className="text-slate-800">{Math.min(wpLogStartIndex + logPageSize, totalWpLogs)}</strong> de{' '}
+                  <strong className="text-slate-800">{totalWpLogs}</strong> registros
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setLogPage((p) => Math.max(1, p - 1))}
+                    disabled={safeWpLogPage === 1}
+                    className="px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer font-medium text-slate-700 bg-white"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    Anterior
+                  </button>
+
+                  {Array.from({ length: totalWpLogPages }, (_, i) => i + 1)
+                    .filter((page) => page === 1 || page === totalWpLogPages || Math.abs(page - safeWpLogPage) <= 1)
+                    .map((page, idx, arr) => {
+                      const prev = arr[idx - 1];
+                      return (
+                        <React.Fragment key={page}>
+                          {prev && page - prev > 1 && (
+                            <span className="px-1 text-slate-300">...</span>
+                          )}
+                          <button
+                            onClick={() => setLogPage(page)}
+                            className={`min-w-8 h-8 px-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                              safeWpLogPage === page
+                                ? 'bg-indigo-600 text-white'
+                                : 'border border-slate-200 hover:bg-slate-50 text-slate-700 bg-white'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        </React.Fragment>
+                      );
+                    })}
+
+                  <button
+                    onClick={() => setLogPage((p) => Math.min(totalWpLogPages, p + 1))}
+                    disabled={safeWpLogPage === totalWpLogPages}
+                    className="px-2.5 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer font-medium text-slate-700 bg-white"
+                  >
+                    Próximo
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span>Por página:</span>
+                  <select
+                    value={logPageSize}
+                    onChange={(e) => {
+                      setLogPageSize(Number(e.target.value));
+                      setLogPage(1);
+                    }}
+                    className="px-2 py-1 border border-slate-200 rounded-md text-xs bg-white text-slate-700 focus:ring-1 focus:ring-indigo-500 focus:outline-none"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

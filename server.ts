@@ -714,7 +714,8 @@ async function startServer() {
   app.get('/api/logs', requireAuth, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
     const category = typeof req.query.category === 'string' ? req.query.category : 'all';
     const search = typeof req.query.search === 'string' ? req.query.search : '';
-    const logs = dbRepo.listAuditLogs({ category, search, limit: 100 });
+    const limit = Math.min(1000, Number(req.query.limit) || 500);
+    const logs = dbRepo.listAuditLogs({ category, search, limit });
     res.json({ logs });
   });
 
@@ -1196,7 +1197,7 @@ async function startServer() {
   // WordPress Activity Logs
   app.get('/api/wordpress/logs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const siteId = req.query.siteId as string | undefined;
-    const limit = Number(req.query.limit) || 50;
+    const limit = Math.min(1000, Number(req.query.limit) || 500);
     const logs = dbRepo.getWordPressLogs(siteId, limit);
     res.json(logs);
   });
