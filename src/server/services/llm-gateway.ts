@@ -51,6 +51,7 @@ export async function executeLlmPrompt(params: {
             'HTTP-Referer': env.APP_URL,
             'X-Title': settings.platformName || 'Auto Post WordPress AI',
           },
+          signal: AbortSignal.timeout(35000),
           body: JSON.stringify({
             model: modelName,
             temperature,
@@ -77,13 +78,26 @@ export async function executeLlmPrompt(params: {
           };
         } else {
           const errData = await res.text();
-          throw new Error(`OpenRouter HTTP ${res.status}: ${errData.slice(0, 160)}`);
+          let cleanErr = errData.slice(0, 160);
+          try {
+            const jsonErr = JSON.parse(errData);
+            cleanErr = jsonErr?.error?.message || jsonErr?.message || cleanErr;
+          } catch {
+            if (cleanErr.includes('<!DOCTYPE') || cleanErr.includes('<html')) {
+              cleanErr = `Resposta HTML inesperada (código HTTP ${res.status})`;
+            }
+          }
+          throw new Error(`OpenRouter HTTP ${res.status}: ${cleanErr}`);
         }
       } catch (err: any) {
+        const isTimeout = err.name === 'TimeoutError' || err.message?.includes('Timeout');
+        const msg = isTimeout
+          ? `Tempo limite esgotado (35s) conectando ao OpenRouter.`
+          : err.message;
         return {
           provider: 'openrouter',
           model: modelName,
-          output: `[OpenRouter Error (${err.message})]: Não foi possível obter resposta do OpenRouter. Verifique a chave de API e o saldo.`,
+          output: `[OpenRouter Error]: ${msg}`,
           latencyMs: Date.now() - start,
           liveApiUsed: false,
         };
@@ -168,8 +182,10 @@ export async function executeLlmPrompt(params: {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
+          'x-api-key': apiKey,
           'Content-Type': 'application/json',
         },
+        signal: AbortSignal.timeout(35000),
         body: JSON.stringify({
           model: llamaModel,
           temperature,
@@ -196,13 +212,32 @@ export async function executeLlmPrompt(params: {
         };
       } else {
         const errData = await res.text();
-        throw new Error(`HTTP ${res.status}: ${errData.slice(0, 160)}`);
+        if (res.status === 524) {
+          throw new Error(`Timeout de rede Cloudflare (524): O servidor ${baseUrl} demorou mais de 100 segundos para responder.`);
+        }
+        if (res.status === 502 || res.status === 503) {
+          throw new Error(`Servidor inacessível (HTTP ${res.status}): Verifique se o servidor ${baseUrl} está online.`);
+        }
+        let cleanErr = errData.slice(0, 160);
+        try {
+          const jsonErr = JSON.parse(errData);
+          cleanErr = jsonErr?.error?.message || jsonErr?.message || cleanErr;
+        } catch {
+          if (cleanErr.includes('<!DOCTYPE') || cleanErr.includes('<html')) {
+            cleanErr = `Resposta HTML de erro do gateway proxy (HTTP ${res.status})`;
+          }
+        }
+        throw new Error(`HTTP ${res.status}: ${cleanErr}`);
       }
     } catch (err: any) {
+      const isTimeout = err.name === 'TimeoutError' || err.message?.includes('Timeout');
+      const msg = isTimeout
+        ? `Tempo limite esgotado: O servidor ${baseUrl} demorou mais de 35s para responder à requisição do modelo '${llamaModel}'.`
+        : err.message;
       return {
         provider: 'llama',
         model: llamaModel,
-        output: `[Llama/Groq Error (${err.message})]: Falha ao comunicar com o endpoint.`,
+        output: `[Falha no Endpoint Customizado]: ${msg}`,
         latencyMs: Date.now() - start,
         liveApiUsed: false,
       };
