@@ -3,7 +3,7 @@
  * Plugin Name: Auto Post WordPress AI
  * Plugin URI: https://github.com/Diegaosx/Auto-post-wordpress-ai
  * Description: Sincronização automatizada e publicação de artigos com Inteligência Artificial via REST API segura.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Auto Post AI Team
  * License: GPL v2 or later
  * Text Domain: auto-post-wordpress-ai
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('AUTO_POST_AI_VERSION', '1.0.0');
+define('AUTO_POST_AI_VERSION', '1.1.0');
 define('AUTO_POST_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AUTO_POST_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AUTO_POST_AI_DEFAULT_API_URL', '{{API_URL}}');
@@ -488,22 +488,6 @@ class AutoPostWordPressAI {
             return new WP_Error('post_insert_failed', $post_id->get_error_message(), array('status' => 500));
         }
 
-        // Meta fields de SEO (Yoast, RankMath, etc.)
-        if (!empty($meta_data) && is_array($meta_data)) {
-            foreach ($meta_data as $meta_key => $meta_val) {
-                update_post_meta($post_id, sanitize_key($meta_key), sanitize_text_field($meta_val));
-            }
-        }
-
-        if (!empty($body['seo_title'])) {
-            update_post_meta($post_id, '_yoast_wpseo_title', sanitize_text_field($body['seo_title']));
-            update_post_meta($post_id, 'rank_math_title', sanitize_text_field($body['seo_title']));
-        }
-        if (!empty($body['seo_description'])) {
-            update_post_meta($post_id, '_yoast_wpseo_metadesc', sanitize_text_field($body['seo_description']));
-            update_post_meta($post_id, 'rank_math_description', sanitize_text_field($body['seo_description']));
-        }
-
         // Salvar referência da origem
         update_post_meta($post_id, '_autopost_ai_generated', '1');
         update_post_meta($post_id, '_autopost_ai_sync_date', current_time('mysql'));
@@ -511,20 +495,21 @@ class AutoPostWordPressAI {
             update_post_meta($post_id, '_autopost_ai_source_url', esc_url_raw($body['source_url']));
         }
 
-        // Anexar imagem em destaque
-        $featured_thumb_id = null;
-        if (!empty($image_url)) {
-            $featured_thumb_id = $this->sideload_featured_image($image_url, $post_id, $title);
-        }
+        // Metadados SEO Avançados (Yoast, RankMath, AIOSEO)
+        $this->apply_post_seo_metadata($post_id, $body);
+
+        // Processar Imagem em Destaque (Base64 / URL Resiliente / Attachment ID) + SEO da Imagem
+        $featured_thumb_id = $this->process_featured_image($post_id, $body);
 
         update_option('autopost_ai_last_sync', current_time('mysql'));
 
         return rest_ensure_response(array(
-            'success' => true,
-            'post_id' => $post_id,
-            'status' => $status,
-            'permalink' => get_permalink($post_id),
-            'featured_image_id' => $featured_thumb_id,
+            'success'            => true,
+            'post_id'            => $post_id,
+            'status'             => $status,
+            'permalink'          => get_permalink($post_id),
+            'featured_image_id'  => $featured_thumb_id,
+            'featured_image_url' => $featured_thumb_id ? wp_get_attachment_url($featured_thumb_id) : null,
         ));
     }
 
@@ -546,14 +531,21 @@ class AutoPostWordPressAI {
             return new WP_Error('update_failed', $res->get_error_message(), array('status' => 500));
         }
 
-        if (!empty($body['image_url'])) {
-            $this->sideload_featured_image($body['image_url'], $post_id, $body['title'] ?? '');
+        // Atualizar SEO do post
+        $this->apply_post_seo_metadata($post_id, $body);
+
+        // Atualizar imagem em destaque se fornecida
+        $featured_thumb_id = null;
+        if (!empty($body['image_base64']) || !empty($body['image_url']) || !empty($body['featured_image']) || !empty($body['featured_media'])) {
+            $featured_thumb_id = $this->process_featured_image($post_id, $body);
         }
 
         return rest_ensure_response(array(
-            'success' => true,
-            'post_id' => $post_id,
-            'permalink' => get_permalink($post_id),
+            'success'            => true,
+            'post_id'            => $post_id,
+            'permalink'          => get_permalink($post_id),
+            'featured_image_id'  => $featured_thumb_id,
+            'featured_image_url' => $featured_thumb_id ? wp_get_attachment_url($featured_thumb_id) : null,
         ));
     }
 
@@ -587,54 +579,309 @@ class AutoPostWordPressAI {
     public function rest_upload_media($request) {
         $body = $request->get_json_params();
         $image_url = esc_url_raw($body['image_url'] ?? '');
+        $image_base64 = $body['image_base64'] ?? '';
+        $title = sanitize_text_field($body['title'] ?? 'Imagem Auto Post AI');
+        $alt_text = sanitize_text_field($body['alt_text'] ?? $body['image_alt'] ?? $title);
 
-        if (empty($image_url)) {
-            return new WP_Error('invalid_url', 'URL da imagem é obrigatória', array('status' => 400));
+        $attach_id = null;
+        if (!empty($image_base64)) {
+            $attach_id = $this->upload_base64_image($image_base64, 0, $title, $alt_text);
+        } elseif (!empty($image_url)) {
+            $attach_id = $this->upload_external_image_resilient($image_url, 0, $title, $alt_text);
         }
 
-        $attach_id = $this->sideload_featured_image($image_url, 0, $body['title'] ?? 'Imagem Auto Post AI');
-        if ($attach_id) {
+        if ($attach_id && !is_wp_error($attach_id)) {
             return rest_ensure_response(array(
                 'success' => true,
-                'id' => $attach_id,
-                'url' => wp_get_attachment_url($attach_id),
+                'id'      => $attach_id,
+                'url'     => wp_get_attachment_url($attach_id),
             ));
         }
 
         return new WP_Error('upload_failed', 'Não foi possível baixar ou salvar a imagem', array('status' => 500));
     }
 
-    private function sideload_featured_image($image_url, $post_id, $desc = '') {
-        require_once(ABSPATH . 'wp-admin/includes/media.php');
-        require_once(ABSPATH . 'wp-admin/includes/file.php');
-        require_once(ABSPATH . 'wp-admin/includes/image.php');
+    /**
+     * Aplica metadados avançados de SEO ao post (compatível com Yoast SEO, Rank Math, AIOSEO)
+     */
+    private function apply_post_seo_metadata($post_id, $body) {
+        $title = sanitize_text_field($body['seo_title'] ?? $body['title'] ?? '');
+        $desc = sanitize_text_field($body['seo_description'] ?? $body['excerpt'] ?? '');
+        $focus_kw = sanitize_text_field($body['focus_keyword'] ?? ($body['tags'][0] ?? ''));
+        $keywords = $body['keywords'] ?? $body['tags'] ?? array();
 
-        $tmp = download_url($image_url);
-        if (is_wp_error($tmp)) {
-            return null;
+        // Yoast SEO
+        if (!empty($title)) {
+            update_post_meta($post_id, '_yoast_wpseo_title', $title);
+            update_post_meta($post_id, 'rank_math_title', $title);
+        }
+        if (!empty($desc)) {
+            update_post_meta($post_id, '_yoast_wpseo_metadesc', $desc);
+            update_post_meta($post_id, 'rank_math_description', $desc);
+        }
+        if (!empty($focus_kw)) {
+            update_post_meta($post_id, '_yoast_wpseo_focuskw', $focus_kw);
+            update_post_meta($post_id, 'rank_math_focus_keyword', $focus_kw);
+        }
+        if (!empty($keywords) && is_array($keywords)) {
+            $clean_kw = array_map('sanitize_text_field', $keywords);
+            update_post_meta($post_id, '_yoast_wpseo_keywordsynonyms', wp_json_encode($clean_kw));
         }
 
-        $file_array = array(
-            'name' => basename(parse_url($image_url, PHP_URL_PATH)) ?: 'featured-image.jpg',
-            'tmp_name' => $tmp,
+        // Meta tags livres enviadas no payload
+        if (!empty($body['meta']) && is_array($body['meta'])) {
+            foreach ($body['meta'] as $meta_key => $meta_val) {
+                if (is_scalar($meta_val)) {
+                    update_post_meta($post_id, sanitize_key($meta_key), sanitize_text_field($meta_val));
+                }
+            }
+        }
+    }
+
+    /**
+     * Processa imagem destacada (por base64, ID direto ou download resiliente) e aplica SEO
+     */
+    public function process_featured_image($post_id, $params) {
+        $title = sanitize_text_field($params['title'] ?? get_the_title($post_id));
+        $alt_text = sanitize_text_field($params['image_alt'] ?? $params['alt_text'] ?? $title);
+        $caption = sanitize_text_field($params['image_caption'] ?? $params['caption'] ?? '');
+        $description = sanitize_text_field($params['image_description'] ?? $params['description'] ?? '');
+        $image_url = esc_url_raw($params['image_url'] ?? $params['featured_image'] ?? '');
+        $image_base64 = $params['image_base64'] ?? '';
+        $featured_media = intval($params['featured_media'] ?? 0);
+
+        // Se já recebeu um ID direto de attachment existente
+        if ($featured_media > 0 && get_post($featured_media)) {
+            set_post_thumbnail($post_id, $featured_media);
+            update_post_meta($post_id, '_thumbnail_id', $featured_media);
+            $this->apply_seo_image_tags($post_id, $featured_media, $params);
+            return $featured_media;
+        }
+
+        $attachment_id = null;
+
+        // 1. Tentar upload direto de imagem base64 (100% infalível, dispensa requisição externa do PHP)
+        if (!empty($image_base64)) {
+            $res = $this->upload_base64_image($image_base64, $post_id, $title, $alt_text, $caption, $description);
+            if (!is_wp_error($res) && is_numeric($res)) {
+                $attachment_id = (int) $res;
+            }
+        }
+
+        // 2. Se não veio base64 ou falhou, tentar download resiliente da URL externa
+        if (!$attachment_id && !empty($image_url)) {
+            $attachment_id = $this->upload_external_image_resilient($image_url, $post_id, $title, $alt_text, $caption, $description);
+        }
+
+        if ($attachment_id && is_numeric($attachment_id)) {
+            set_post_thumbnail($post_id, $attachment_id);
+            update_post_meta($post_id, '_thumbnail_id', $attachment_id);
+            $this->apply_seo_image_tags($post_id, $attachment_id, $params);
+            return $attachment_id;
+        }
+
+        return null;
+    }
+
+    /**
+     * Faz upload de imagem base64 para o WordPress com nome SEO e alt text
+     */
+    private function upload_base64_image($base64_data, $post_id, $title = '', $alt_text = '', $caption = '', $description = '') {
+        if (preg_match('/data:image\/(\w+);base64,(.+)/s', $base64_data, $matches)) {
+            $image_type = strtolower($matches[1]);
+            $image_data = base64_decode($matches[2]);
+        } else {
+            // Tenta decodificar string base64 pura
+            $image_data = base64_decode($base64_data);
+            $image_type = 'jpg';
+        }
+
+        if (!$image_data) {
+            return new WP_Error('decode_failed', 'Falha ao decodificar imagem base64');
+        }
+
+        if ($image_type === 'jpeg') $image_type = 'jpg';
+        if (!in_array($image_type, array('jpg', 'png', 'webp', 'gif'))) {
+            $image_type = 'jpg';
+        }
+
+        // Gerar nome de arquivo otimizado para SEO com base no título
+        $slug = sanitize_title($title ?: 'imagem-destaque-' . $post_id);
+        $filename = ($slug ? substr($slug, 0, 60) : 'foto-' . $post_id) . '-' . time() . '.' . $image_type;
+
+        $upload = wp_upload_bits($filename, null, $image_data);
+        if (!empty($upload['error'])) {
+            return new WP_Error('upload_failed', $upload['error']);
+        }
+
+        $attachment = array(
+            'post_mime_type' => 'image/' . ($image_type === 'jpg' ? 'jpeg' : $image_type),
+            'post_title'     => $title ?: sanitize_file_name(pathinfo($filename, PATHINFO_FILENAME)),
+            'post_content'   => $description,
+            'post_excerpt'   => $caption,
+            'post_status'    => 'inherit'
         );
 
-        if (!preg_match('/\.(jpg|jpeg|png|webp|gif)$/i', $file_array['name'])) {
-            $file_array['name'] .= '.jpg';
+        $attachment_id = wp_insert_attachment($attachment, $upload['file'], $post_id);
+        if (is_wp_error($attachment_id)) {
+            return $attachment_id;
         }
 
-        $id = media_handle_sideload($file_array, $post_id, $desc);
+        require_once(ABSPATH . 'wp-admin/includes/image.php');
+        require_once(ABSPATH . 'wp-admin/includes/media.php');
 
-        if (is_wp_error($id)) {
+        $attach_data = wp_generate_attachment_metadata($attachment_id, $upload['file']);
+        wp_update_attachment_metadata($attachment_id, $attach_data);
+
+        // Definir texto alternativo SEO
+        if (!empty($alt_text)) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt_text);
+        }
+
+        return $attachment_id;
+    }
+
+    /**
+     * Download resiliente de imagem externa (contorna bloqueios de CDN, User-Agent e SSL)
+     */
+    private function upload_external_image_resilient($image_url, $post_id, $title = '', $alt_text = '', $caption = '', $description = '') {
+        $user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+        require_once(ABSPATH . 'wp-admin/includes/file.php');
+        require_once(ABSPATH . 'wp-admin/includes/media.php');
+        require_once(ABSPATH . 'wp-admin/includes/image.php');
+
+        $tmp = wp_tempnam($image_url);
+        if (!$tmp) {
+            $tmp = tempnam(get_temp_dir(), 'wppic');
+        }
+
+        $downloaded = false;
+
+        // 1. Tentar wp_remote_get com streaming e Browser User-Agent
+        $response = wp_remote_get($image_url, array(
+            'timeout'     => 25,
+            'user-agent'  => $user_agent,
+            'headers'     => array(
+                'Accept'  => 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Referer' => $image_url,
+            ),
+            'sslverify'   => false,
+            'stream'      => true,
+            'filename'    => $tmp,
+        ));
+
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200 && file_exists($tmp) && filesize($tmp) > 0) {
+            $downloaded = true;
+        }
+
+        // 2. Se falhar, tentar cURL nativo com impersonação de navegador
+        if (!$downloaded && function_exists('curl_init')) {
+            $ch = curl_init($image_url);
+            $fp = @fopen($tmp, 'wb');
+            if ($fp) {
+                curl_setopt($ch, CURLOPT_FILE, $fp);
+                curl_setopt($ch, CURLOPT_HEADER, 0);
+                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+                curl_setopt($ch, CURLOPT_USERAGENT, $user_agent);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                curl_exec($ch);
+                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                fclose($fp);
+                if ($code === 200 && file_exists($tmp) && filesize($tmp) > 0) {
+                    $downloaded = true;
+                }
+            }
+        }
+
+        // 3. Fallback clássico do WordPress
+        if (!$downloaded) {
+            $fallback_tmp = download_url($image_url, 30);
+            if (!is_wp_error($fallback_tmp) && file_exists($fallback_tmp) && filesize($fallback_tmp) > 0) {
+                @copy($fallback_tmp, $tmp);
+                @unlink($fallback_tmp);
+                $downloaded = true;
+            }
+        }
+
+        if (!$downloaded || !file_exists($tmp) || filesize($tmp) === 0) {
             @unlink($tmp);
             return null;
         }
 
-        if ($post_id > 0) {
-            set_post_thumbnail($post_id, $id);
+        // Detectar extensão e MIME real da imagem
+        $file_info = @getimagesize($tmp);
+        $ext = 'jpg';
+        if ($file_info && isset($file_info['mime'])) {
+            if (strpos($file_info['mime'], 'png') !== false) $ext = 'png';
+            elseif (strpos($file_info['mime'], 'webp') !== false) $ext = 'webp';
+            elseif (strpos($file_info['mime'], 'gif') !== false) $ext = 'gif';
         }
 
-        return $id;
+        // Gerar nome do arquivo amigável para SEO
+        $slug = sanitize_title($title ?: 'destaque');
+        $filename = ($slug ? substr($slug, 0, 60) : 'foto-' . $post_id) . '-' . time() . '.' . $ext;
+
+        $file_array = array(
+            'name'     => $filename,
+            'tmp_name' => $tmp,
+        );
+
+        $attachment_id = media_handle_sideload($file_array, $post_id, $title);
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            return null;
+        }
+
+        // Metadados SEO do attachment
+        wp_update_post(array(
+            'ID'           => $attachment_id,
+            'post_title'   => $title ?: sanitize_file_name(pathinfo($filename, PATHINFO_FILENAME)),
+            'post_content' => $description,
+            'post_excerpt' => $caption,
+        ));
+
+        if (!empty($alt_text)) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $alt_text);
+        }
+
+        return $attachment_id;
+    }
+
+    /**
+     * Aplica tags sociais de imagem para plugins de SEO (Yoast, Rank Math, AIOSEO)
+     */
+    private function apply_seo_image_tags($post_id, $attachment_id, $params = array()) {
+        $attachment_url = wp_get_attachment_url($attachment_id);
+        if (!$attachment_url) return;
+
+        // Yoast SEO
+        update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $attachment_url);
+        update_post_meta($post_id, '_yoast_wpseo_opengraph-image-id', $attachment_id);
+        update_post_meta($post_id, '_yoast_wpseo_twitter-image', $attachment_url);
+        update_post_meta($post_id, '_yoast_wpseo_twitter-image-id', $attachment_id);
+
+        // Rank Math SEO
+        update_post_meta($post_id, 'rank_math_facebook_image', $attachment_url);
+        update_post_meta($post_id, 'rank_math_facebook_image_id', $attachment_id);
+        update_post_meta($post_id, 'rank_math_twitter_image', $attachment_url);
+        update_post_meta($post_id, 'rank_math_twitter_image_id', $attachment_id);
+
+        // All in One SEO
+        update_post_meta($post_id, '_aioseo_og_image_type', 'featured');
+        update_post_meta($post_id, '_aioseo_og_image_custom_url', $attachment_url);
+        update_post_meta($post_id, '_aioseo_twitter_image_type', 'featured');
+        update_post_meta($post_id, '_aioseo_twitter_image_custom_url', $attachment_url);
+    }
+
+    private function sideload_featured_image($image_url, $post_id, $desc = '') {
+        return $this->process_featured_image($post_id, array(
+            'image_url' => $image_url,
+            'title'     => $desc,
+        ));
     }
 }
 

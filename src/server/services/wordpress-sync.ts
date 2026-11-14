@@ -35,6 +35,32 @@ export async function syncArticleToWordPress(
   const postStatus = options?.status || site.defaultStatus || 'publish';
   const categoryName = options?.category || site.defaultCategory || 'Notícias';
 
+  // 1. Pré-carregar imagem em base64 se disponível (elimina 100% de falhas de CDN/firewall no WordPress)
+  let imageBase64: string | undefined = undefined;
+  if (article.imageUrl) {
+    try {
+      const imgRes = await fetch(article.imageUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (imgRes.ok) {
+        const arrayBuf = await imgRes.arrayBuffer();
+        if (arrayBuf.byteLength > 0 && arrayBuf.byteLength <= 8 * 1024 * 1024) {
+          const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+          imageBase64 = `data:${contentType};base64,${Buffer.from(arrayBuf).toString('base64')}`;
+        }
+      }
+    } catch (imgErr: any) {
+      console.warn(`[WordPress Sync] Aviso: Não foi possível pré-carregar buffer da imagem (${article.imageUrl}):`, imgErr.message);
+    }
+  }
+
+  const focusKeyword = article.aiSeoKeywords && article.aiSeoKeywords.length > 0 ? article.aiSeoKeywords[0] : 'notícias';
+
   const payload = {
     title: postTitle,
     content: postContent,
@@ -44,6 +70,13 @@ export async function syncArticleToWordPress(
     tags: article.aiSeoKeywords && article.aiSeoKeywords.length > 0 ? article.aiSeoKeywords : ['notícias', 'atualidades'],
     image_url: article.imageUrl || undefined,
     featured_image: article.imageUrl || undefined,
+    image_base64: imageBase64,
+    image_alt: postTitle,
+    image_title: postTitle,
+    image_caption: article.subtitle || postExcerpt.slice(0, 160),
+    image_description: postExcerpt,
+    focus_keyword: focusKeyword,
+    keywords: article.aiSeoKeywords || [],
     seo_title: postTitle,
     seo_description: postExcerpt,
     source_url: article.originalUrl,
