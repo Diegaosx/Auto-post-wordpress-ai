@@ -171,82 +171,7 @@ export async function executeLlmPrompt(params: {
   }
 
   // ==========================================================================
-  // 3. META LLAMA / GROQ / OLLAMA / OPENAI-COMPATIBLE
-  // ==========================================================================
-  const apiKey = params.apiKey || settings.llamaApiKey || env.LLAMA_API_KEY;
-  const baseUrl = params.baseUrl || settings.llamaBaseUrl || env.LLAMA_API_BASE_URL || 'https://api.groq.com/openai/v1';
-  const llamaModel = params.model || settings.llamaModel || env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile';
-
-  if (apiKey) {
-    try {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'x-api-key': apiKey,
-          'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(35000),
-        body: JSON.stringify({
-          model: llamaModel,
-          temperature,
-          messages: [
-            ...(params.systemInstruction
-              ? [{ role: 'system', content: params.systemInstruction }]
-              : []),
-            { role: 'user', content: cleanPrompt },
-          ],
-        }),
-      });
-
-      if (res.ok) {
-        const data = (await res.json()) as {
-          choices?: { message?: { content?: string } }[];
-        };
-        const text = data.choices?.[0]?.message?.content || 'Empty response.';
-        return {
-          provider: 'llama',
-          model: llamaModel,
-          output: text,
-          latencyMs: Date.now() - start,
-          liveApiUsed: true,
-        };
-      } else {
-        const errData = await res.text();
-        if (res.status === 524) {
-          throw new Error(`Timeout de rede Cloudflare (524): O servidor ${baseUrl} demorou mais de 100 segundos para responder.`);
-        }
-        if (res.status === 502 || res.status === 503) {
-          throw new Error(`Servidor inacessível (HTTP ${res.status}): Verifique se o servidor ${baseUrl} está online.`);
-        }
-        let cleanErr = errData.slice(0, 160);
-        try {
-          const jsonErr = JSON.parse(errData);
-          cleanErr = jsonErr?.error?.message || jsonErr?.message || cleanErr;
-        } catch {
-          if (cleanErr.includes('<!DOCTYPE') || cleanErr.includes('<html')) {
-            cleanErr = `Resposta HTML de erro do gateway proxy (HTTP ${res.status})`;
-          }
-        }
-        throw new Error(`HTTP ${res.status}: ${cleanErr}`);
-      }
-    } catch (err: any) {
-      const isTimeout = err.name === 'TimeoutError' || err.message?.includes('Timeout');
-      const msg = isTimeout
-        ? `Tempo limite esgotado: O servidor ${baseUrl} demorou mais de 35s para responder à requisição do modelo '${llamaModel}'.`
-        : err.message;
-      return {
-        provider: 'llama',
-        model: llamaModel,
-        output: `[Falha no Endpoint Customizado]: ${msg}`,
-        latencyMs: Date.now() - start,
-        liveApiUsed: false,
-      };
-    }
-  }
-
-  // ==========================================================================
-  // 4. PAINEL AGY / CLUSTER ANTIGRAVITY (MCP SERVER)
+  // 3. PAINEL AGY / CLUSTER ANTIGRAVITY (MCP SERVER)
   // ==========================================================================
   if (provider === 'painel-agy') {
     const mcpModel = params.model || settings.mcpAgyModel || 'gemini-3.8-flash';
@@ -277,11 +202,96 @@ export async function executeLlmPrompt(params: {
     }
   }
 
+  // ==========================================================================
+  // 4. META LLAMA / GROQ / OLLAMA / OPENAI-COMPATIBLE
+  // ==========================================================================
+  if (provider === 'llama') {
+    const apiKey = params.apiKey || settings.llamaApiKey || env.LLAMA_API_KEY;
+    const baseUrl = params.baseUrl || settings.llamaBaseUrl || env.LLAMA_API_BASE_URL || 'https://api.groq.com/openai/v1';
+    const llamaModel = params.model || settings.llamaModel || env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile';
+
+    if (apiKey) {
+      try {
+        const res = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'x-api-key': apiKey,
+            'Content-Type': 'application/json',
+          },
+          signal: AbortSignal.timeout(35000),
+          body: JSON.stringify({
+            model: llamaModel,
+            temperature,
+            messages: [
+              ...(params.systemInstruction
+                ? [{ role: 'system', content: params.systemInstruction }]
+                : []),
+              { role: 'user', content: cleanPrompt },
+            ],
+          }),
+        });
+
+        if (res.ok) {
+          const data = (await res.json()) as {
+            choices?: { message?: { content?: string } }[];
+          };
+          const text = data.choices?.[0]?.message?.content || 'Empty response.';
+          return {
+            provider: 'llama',
+            model: llamaModel,
+            output: text,
+            latencyMs: Date.now() - start,
+            liveApiUsed: true,
+          };
+        } else {
+          const errData = await res.text();
+          if (res.status === 524) {
+            throw new Error(`Timeout de rede Cloudflare (524): O servidor ${baseUrl} demorou mais de 100 segundos para responder.`);
+          }
+          if (res.status === 502 || res.status === 503) {
+            throw new Error(`Servidor inacessível (HTTP ${res.status}): Verifique se o servidor ${baseUrl} está online.`);
+          }
+          let cleanErr = errData.slice(0, 160);
+          try {
+            const jsonErr = JSON.parse(errData);
+            cleanErr = jsonErr?.error?.message || jsonErr?.message || cleanErr;
+          } catch {
+            if (cleanErr.includes('<!DOCTYPE') || cleanErr.includes('<html')) {
+              cleanErr = `Resposta HTML de erro do gateway proxy (HTTP ${res.status})`;
+            }
+          }
+          throw new Error(`HTTP ${res.status}: ${cleanErr}`);
+        }
+      } catch (err: any) {
+        const isTimeout = err.name === 'TimeoutError' || err.message?.includes('Timeout');
+        const msg = isTimeout
+          ? `Tempo limite esgotado: O servidor ${baseUrl} demorou mais de 35s para responder à requisição do modelo '${llamaModel}'.`
+          : err.message;
+        return {
+          provider: 'llama',
+          model: llamaModel,
+          output: `[Falha no Endpoint Customizado]: ${msg}`,
+          latencyMs: Date.now() - start,
+          liveApiUsed: false,
+        };
+      }
+    }
+
+    return {
+      provider: 'llama',
+      model: llamaModel,
+      output: `[Llama Native Adapter (${llamaModel})]: Chave de API não configurada.`,
+      latencyMs: Math.max(14, Date.now() - start),
+      liveApiUsed: false,
+    };
+  }
+
   return {
-    provider: 'llama',
-    model: llamaModel,
-    output: `[Llama Native Adapter (${llamaModel})]: Chave de API não configurada.`,
-    latencyMs: Math.max(14, Date.now() - start),
+    provider: 'openrouter',
+    model: 'openai/gpt-4o-mini',
+    output: '[LLM Gateway]: Nenhum provedor válido selecionado.',
+    latencyMs: Math.max(10, Date.now() - start),
     liveApiUsed: false,
   };
 }

@@ -61,7 +61,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   llamaApiKey: env.LLAMA_API_KEY || '',
   llamaBaseUrl: env.LLAMA_API_BASE_URL || 'https://api.groq.com/openai/v1',
   llamaModel: env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile',
-  mcpAgyUrl: env.MCP_AGY_URL || 'https://backend-agy.saletub.com/api/mcp/panel',
+  mcpAgyUrl: env.MCP_AGY_URL || 'https://backend-agy.saletub.com/mcp',
   mcpAgyToken: env.MCP_AGY_TOKEN || 'mcp_live_2a4d41f40d6306d9514e56e618fc64e12a59b4a6870a4aba',
   mcpAgyModel: env.MCP_AGY_MODEL || 'gemini-3.8-flash',
   mcpImageStrategy: (env.MCP_IMAGE_STRATEGY as any) || 'temporal_advance',

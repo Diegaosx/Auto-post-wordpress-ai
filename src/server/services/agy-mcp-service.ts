@@ -54,13 +54,15 @@ export interface McpRewriteResult {
 
 /**
  * Normaliza o endpoint base do MCP para comunicação HTTP e SSE
+ * Suporta https://backend-agy.saletub.com/mcp, https://backend-agy.saletub.com/mcp/ ou https://backend-agy.saletub.com/api/mcp/panel
  */
-function resolveMcpEndpoints(rawUrl?: string) {
+export function resolveMcpEndpoints(rawUrl?: string) {
   let base = (rawUrl || env.MCP_AGY_URL || 'https://backend-agy.saletub.com/api/mcp/panel').trim();
-  if (base.endsWith('/')) base = base.slice(0, -1);
+  while (base.endsWith('/')) base = base.slice(0, -1);
   if (base.endsWith('/mcp')) {
-    // Corrige /mcp para /api/mcp/panel se o usuário digitou o alias
     base = base.replace(/\/mcp$/, '/api/mcp/panel');
+  } else if (!base.includes('/api/mcp/panel')) {
+    base = `${base}/api/mcp/panel`;
   }
 
   const sseUrl = `${base}/sse`;

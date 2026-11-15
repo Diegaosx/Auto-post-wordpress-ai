@@ -64,7 +64,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     llamaApiKey: '',
     llamaBaseUrl: 'https://api.groq.com/openai/v1',
     llamaModel: 'llama-3.3-70b-versatile',
-    mcpAgyUrl: 'https://backend-agy.saletub.com/api/mcp/panel',
+    mcpAgyUrl: 'https://backend-agy.saletub.com/mcp',
     mcpAgyToken: '',
     mcpAgyModel: 'gemini-3.8-flash',
     mcpImageStrategy: 'temporal_advance',
@@ -118,7 +118,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           llamaApiKey: '',
           llamaBaseUrl: data.llamaBaseUrl || 'https://api.groq.com/openai/v1',
           llamaModel: data.llamaModel || 'llama-3.3-70b-versatile',
-          mcpAgyUrl: data.mcpAgyUrl || 'https://backend-agy.saletub.com/api/mcp/panel',
+          mcpAgyUrl: data.mcpAgyUrl || 'https://backend-agy.saletub.com/mcp',
           mcpAgyToken: '',
           mcpAgyModel: data.mcpAgyModel || 'gemini-3.8-flash',
           mcpImageStrategy: data.mcpImageStrategy || 'temporal_advance',
@@ -256,7 +256,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     } else if (targetProvider === 'painel-agy') {
       apiKey = form.mcpAgyToken || '';
       model = form.mcpAgyModel || 'gemini-3.8-flash';
-      baseUrl = form.mcpAgyUrl || 'https://backend-agy.saletub.com/api/mcp/panel';
+      baseUrl = form.mcpAgyUrl || 'https://backend-agy.saletub.com/mcp';
     } else {
       apiKey = form.llamaApiKey || '';
       model = form.llamaModel || '';
@@ -978,7 +978,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                       value={form.mcpAgyUrl}
                       onChange={(e) => setForm({ ...form, mcpAgyUrl: e.target.value })}
                       className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-indigo-500"
-                      placeholder="https://backend-agy.saletub.com/api/mcp/panel"
+                      placeholder="https://backend-agy.saletub.com/mcp"
                     />
                     <p className="text-[10px] text-slate-500 mt-1">
                       Suporta SSE persistente (/sse) com keepalives a cada 15s para eliminar erro 524 Cloudflare.
