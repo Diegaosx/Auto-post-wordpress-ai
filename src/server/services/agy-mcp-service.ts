@@ -312,167 +312,140 @@ Ao concluir a execução de ferramentas e redação, entregue a resposta final e
 }
 \`\`\``;
 
-  console.log(`[MCP AGY] Iniciando turno de reescrita via SSE persistente (Modelo: ${mcpModel}, Estratégia Imagem: ${imageStrategy})...`);
+  console.log(`[MCP AGY] Iniciando turno de reescrita no cluster Antigravity (Modelo: ${mcpModel}, Estratégia Imagem: ${imageStrategy})...`);
 
-  const requestId = Math.floor(Math.random() * 1000000) + 1;
-  const timeoutMs = timeoutSeconds * 1000;
+  const { postUrl } = resolveMcpEndpoints(mcpUrl);
 
-  return new Promise<McpRewriteResult>((resolve, reject) => {
-    let resolved = false;
-    let sseReq: http.ClientRequest | null = null;
-    let endpointUrl = '';
-    let buffer = '';
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        try {
-          if (sseReq) sseReq.destroy();
-        } catch (_) {}
-        reject(
-          new Error(
-            `Timeout de processamento no Painel AGY (${timeoutSeconds}s). A tarefa demorou mais que o limite configurado.`
-          )
-        );
-      }
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      try {
-        if (sseReq) sseReq.destroy();
-      } catch (_) {}
-    };
-
-    sseReq = client.request(
+  // 1. Criar conversa dedicada no Painel AGY
+  let convId = '';
+  try {
+    const createRes = await sendJsonRpc(
+      postUrl,
+      token,
       {
-        hostname: parsedSse.hostname,
-        port: parsedSse.port || (isHttps ? 443 : 80),
-        path: parsedSse.pathname + (parsedSse.search ? parsedSse.search + '&' : '?') + `token=${encodeURIComponent(token)}`,
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'text/event-stream',
-          'Cache-Control': 'no-cache',
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'tools/call',
+        params: {
+          name: 'criar_conversa',
+          arguments: {
+            title: `Reescrita: ${article.originalTitle.slice(0, 35)}`,
+            model: mcpModel,
+          },
         },
       },
-      (sseRes) => {
-        if (sseRes.statusCode && sseRes.statusCode >= 400) {
-          cleanup();
-          resolved = true;
-          return reject(new Error(`Falha ao conectar no canal SSE do MCP (HTTP ${sseRes.statusCode})`));
-        }
-
-        sseRes.on('data', (chunk: Buffer) => {
-          if (resolved) return;
-          buffer += chunk.toString('utf8');
-
-          // 1. Descoberta do Endpoint de Envio de Mensagens da Sessão SSE
-          if (!endpointUrl && buffer.includes('event: endpoint')) {
-            const match = buffer.match(/data:\s*([^\r\n]+)/);
-            if (match) {
-              endpointUrl = match[1].trim();
-              console.log(`[MCP AGY] Canal SSE conectado. Despachando turno para ${endpointUrl}...`);
-
-              // Envia a mensagem JSON-RPC para o cluster via POST
-              const postParsed = new URL(
-                endpointUrl.startsWith('http')
-                  ? endpointUrl
-                  : `${parsedSse.protocol}//${parsedSse.host}${endpointUrl}`
-              );
-
-              const postReq = client.request(
-                {
-                  hostname: postParsed.hostname,
-                  port: postParsed.port || (isHttps ? 443 : 80),
-                  path: postParsed.pathname + postParsed.search,
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                  },
-                },
-                (postRes) => {
-                  if (postRes.statusCode !== 202 && postRes.statusCode !== 200) {
-                    console.warn(`[MCP AGY] Aviso: POST de mensagem retornou status HTTP ${postRes.statusCode}`);
-                  }
-                }
-              );
-
-              postReq.on('error', (err) => {
-                console.error('[MCP AGY] Erro no POST de mensagem SSE:', err.message);
-              });
-
-              postReq.write(
-                JSON.stringify({
-                  jsonrpc: '2.0',
-                  id: requestId,
-                  method: 'tools/call',
-                  params: {
-                    name: 'enviar_mensagem',
-                    arguments: {
-                      message: promptMessage,
-                      model: mcpModel,
-                    },
-                  },
-                })
-              );
-              postReq.end();
-            }
-          }
-
-          // 2. Recepção da Resposta Conclusiva do Robô via SSE
-          if (buffer.includes('event: message')) {
-            const events = buffer.split('\n\n');
-            for (const ev of events) {
-              if (ev.includes('event: message') && ev.includes('data:')) {
-                const dataMatch = ev.match(/data:\s*([\s\S]+)$/);
-                if (dataMatch) {
-                  try {
-                    const rpcResponse = JSON.parse(dataMatch[1].trim());
-                    if (rpcResponse.id === requestId) {
-                      resolved = true;
-                      cleanup();
-                      const finalResult = processMcpResponse(rpcResponse, article);
-                      return resolve(finalResult);
-                    }
-                  } catch (parseErr) {
-                    // Continua acumulando chunks
-                  }
-                }
-              }
-            }
-          }
-        });
-
-        sseRes.on('error', (err) => {
-          if (!resolved) {
-            resolved = true;
-            cleanup();
-            reject(new Error(`Erro no fluxo de stream SSE: ${err.message}`));
-          }
-        });
-
-        sseRes.on('end', () => {
-          if (!resolved) {
-            resolved = true;
-            cleanup();
-            reject(new Error('Conexão SSE encerrada antes do término do turno pelo servidor MCP.'));
-          }
-        });
-      }
+      30000
     );
 
-    sseReq.on('error', (err) => {
-      if (!resolved) {
-        resolved = true;
-        cleanup();
-        reject(err);
-      }
-    });
+    const createText = createRes?.result?.content?.[0]?.text;
+    if (createText) {
+      const parsed = JSON.parse(createText);
+      convId = parsed?.conversa?.id || parsed?.id || '';
+    }
+  } catch (createErr: any) {
+    console.warn('[MCP AGY] Aviso ao criar conversa dedicada, continuando com auto-criação:', createErr.message);
+  }
 
-    sseReq.end();
+  // 2. Despachar a execução da mensagem para o cluster Antigravity
+  console.log(`[MCP AGY] Despachando prompt para a conversa ${convId || '(nova)'}...`);
+  sendJsonRpc(
+    postUrl,
+    token,
+    {
+      jsonrpc: '2.0',
+      id: Date.now(),
+      method: 'tools/call',
+      params: {
+        name: 'enviar_mensagem',
+        arguments: {
+          conversation_id: convId || undefined,
+          message: promptMessage,
+          model: mcpModel,
+        },
+      },
+    },
+    120000
+  ).catch((err: any) => {
+    console.log('[MCP AGY Dispatch Notice]:', err.message, '(continuando com polling autônomo do cluster)');
   });
+
+  // 3. Polling resiliente via obter_conversa (eliminando 100% de timeouts de proxy e Cloudflare 524)
+  const startTime = Date.now();
+  const maxWaitMs = timeoutSeconds * 1000;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, 5000));
+    try {
+      if (!convId) {
+        // Se convId não estava disponível no início, busca a conversa mais recente na lista
+        const listRes = await sendJsonRpc(
+          postUrl,
+          token,
+          {
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'tools/call',
+            params: { name: 'listar_conversas', arguments: {} },
+          },
+          20000
+        );
+        const listText = listRes?.result?.content?.[0]?.text;
+        if (listText) {
+          const listData = JSON.parse(listText);
+          if (Array.isArray(listData.conversas) && listData.conversas.length > 0) {
+            convId = listData.conversas[0].id;
+          }
+        }
+      }
+
+      if (convId) {
+        const pollRes = await sendJsonRpc(
+          postUrl,
+          token,
+          {
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method: 'tools/call',
+            params: {
+              name: 'obter_conversa',
+              arguments: {
+                conversation_id: convId,
+                limit_messages: 50,
+              },
+            },
+          },
+          20000
+        );
+
+        const pollText = pollRes?.result?.content?.[0]?.text;
+        if (pollText) {
+          const convData = JSON.parse(pollText);
+          const assistantMsg = (convData.mensagens || []).find(
+            (m: any) => m.role === 'assistant' && m.content && m.content.trim()
+          );
+          if (assistantMsg) {
+            console.log(
+              `[MCP AGY] Turno concluído no cluster com sucesso em ${Math.round((Date.now() - startTime) / 1000)}s!`
+            );
+            return processMcpResponse(
+              {
+                result: {
+                  content: [{ type: 'text', text: assistantMsg.content }],
+                },
+              },
+              article
+            );
+          }
+        }
+      }
+    } catch (pollErr: any) {
+      console.warn('[MCP AGY Poll Warn]:', pollErr.message);
+    }
+  }
+
+  throw new Error(
+    `Timeout de processamento no Painel AGY (${timeoutSeconds}s). O cluster Antigravity não concluiu a tarefa no tempo limite configurado.`
+  );
 }
 
 /**
