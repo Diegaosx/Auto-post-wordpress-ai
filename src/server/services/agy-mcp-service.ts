@@ -3,6 +3,7 @@ import http from 'http';
 import { URL } from 'url';
 import { CapturedArticle, WordPressSite } from '../../shared/types';
 import { env } from '../config/env';
+import { parseRobustArticleJson, sanitizeArticleHtmlForPublish } from './article-cleaner';
 
 export interface McpTestResult {
   success: boolean;
@@ -385,8 +386,8 @@ ${baseContent}
 5. Forneça de 4 a 8 palavras-chave/tags de SEO estratégicas.
 6. Forneça o Alt Text (para acessibilidade da imagem), Título SEO e Legenda Jornalística descritiva para a nova fotografia gerada.
 
-[FORMATO DE SAÍDA OBRIGATÓRIO]:
-Ao concluir a execução de ferramentas e redação, entregue a resposta final estruturada dentro de um único bloco JSON no formato:
+[FORMATO DE SAÍDA OBRIGATÓRIO E REGRAS DE JSON]:
+1. Ao concluir a execução de ferramentas e redação, entregue a resposta final estruturada EXCLUSIVAMENTE dentro de um único bloco JSON no formato:
 \`\`\`json
 {
   "title": "Título Marcante e Otimizado",
@@ -398,7 +399,9 @@ Ao concluir a execução de ferramentas e redação, entregue a resposta final e
   "image_caption": "Legenda editorial jornalística para a imagem",
   "image_title": "Título SEO da fotografia"
 }
-\`\`\``;
+\`\`\`
+2. PROIBIÇÃO ABSOLUTA DE PROLIXIDADE OU METADADOS EXTRAS: NÃO inclua absolutamente NENHUM texto, comentário, saudação, relatório ou nota fora do bloco JSON. É TERMINANTEMENTE PROIBIDO gerar seções como "## Relatório de Implementação", "## Diretrizes Editoriais", "## Notas de Originalidade" ou relatórios de cumprimento de regras.
+3. No campo "content", todo o conteúdo deve ser HTML puro (<p>, <h2>, <h3>, <ul>, <li>). Se usar aspas dentro do texto HTML, use aspas simples (') ou &quot;. Nunca use aspas curvas (“ ou ”) para delimitadores JSON.`;
 
   console.log(`[MCP AGY] Iniciando turno de reescrita no cluster Antigravity (Modelo: ${mcpModel}, Estratégia Imagem: ${imageStrategy}, Sem Foto Original: ${!hasOriginalImage})...`);
 
@@ -565,39 +568,8 @@ async function processMcpResponse(
   const artifactsCreated: any[] = Array.isArray(payload.artifacts_created) ? payload.artifacts_created : [];
   const computeTelemetria = payload.consumo_computacao || {};
 
-  // 1. Extração do JSON editorial da resposta do assistente
-  let parsedArticle: {
-    title?: string;
-    content?: string;
-    excerpt?: string;
-    keywords?: string[];
-    image_alt?: string;
-    image_caption?: string;
-    image_title?: string;
-    image_url?: string;
-  } = {};
-
-  try {
-    const jsonMatch = assistantText.match(/```json\s*([\s\S]*?)\s*```/i);
-    if (jsonMatch) {
-      parsedArticle = JSON.parse(jsonMatch[1]);
-    } else {
-      // Tenta parsing do texto se começar com {
-      const firstBrace = assistantText.indexOf('{');
-      const lastBrace = assistantText.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace > firstBrace) {
-        parsedArticle = JSON.parse(assistantText.slice(firstBrace, lastBrace + 1));
-      }
-    }
-  } catch {
-    // Fallback se o robô respondeu em markdown puro
-    parsedArticle = {
-      title: article.originalTitle,
-      content: `<p>${assistantText.replace(/\n\n/g, '</p><p>')}</p>`,
-      excerpt: article.originalExcerpt || '',
-      keywords: ['noticias', 'tecnologia', 'exclusivo'],
-    };
-  }
+  // 1. Extração robusta, resiliente e blindada do JSON editorial
+  const parsedArticle = parseRobustArticleJson(assistantText, article);
 
   // 2. Coleta de Todos os Candidatos de Imagem Inédita Anti-Plágio
   const imageCandidates: string[] = [];
@@ -663,7 +635,7 @@ async function processMcpResponse(
 
   return {
     title: parsedArticle.title || article.originalTitle,
-    content: parsedArticle.content || article.originalContent,
+    content: sanitizeArticleHtmlForPublish(parsedArticle.content || article.originalContent),
     excerpt: parsedArticle.excerpt || article.originalExcerpt || '',
     keywords: Array.isArray(parsedArticle.keywords) ? parsedArticle.keywords : ['noticias', 'atualidades'],
     newImageUrl: validatedImageUrl,

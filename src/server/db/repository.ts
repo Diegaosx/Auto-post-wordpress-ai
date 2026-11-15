@@ -19,6 +19,7 @@ import {
 } from '../../shared/types';
 import { hashPassword, verifyPassword, hashToken } from '../security/crypto-shield';
 import { env } from '../config/env';
+import { sanitizeArticleHtmlForPublish } from '../services/article-cleaner';
 
 export interface StoredUser extends User {
   passwordHash: string;
@@ -1217,6 +1218,11 @@ class PostgresRepository {
     if (!this.state.capturedArticles) this.state.capturedArticles = [];
     const idx = this.state.capturedArticles.findIndex((a) => a.id === id);
     if (idx === -1) return null;
+
+    if (updates.aiContent) {
+      updates.aiContent = sanitizeArticleHtmlForPublish(updates.aiContent);
+    }
+
     const updated: CapturedArticle = {
       ...this.state.capturedArticles[idx],
       ...updates,

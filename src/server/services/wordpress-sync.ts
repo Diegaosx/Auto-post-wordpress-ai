@@ -1,5 +1,6 @@
 import { dbRepo } from '../db/repository';
 import { CapturedArticle, WordPressSite } from '../../shared/types';
+import { sanitizeArticleHtmlForPublish } from './article-cleaner';
 
 export async function syncArticleToWordPress(
   articleId: string,
@@ -43,9 +44,9 @@ export async function syncArticleToWordPress(
     baseUrl = `https://${baseUrl}`;
   }
 
-  const postTitle = article.aiTitle || article.originalTitle;
-  const postContent = article.aiContent || article.originalContent;
-  const postExcerpt = article.aiExcerpt || article.originalExcerpt || '';
+  const postTitle = (article.aiTitle || article.originalTitle).trim();
+  const postContent = sanitizeArticleHtmlForPublish(article.aiContent || article.originalContent);
+  const postExcerpt = (article.aiExcerpt || article.originalExcerpt || '').trim();
   const postStatus = options?.status || site.defaultStatus || 'publish';
   const categoryName = options?.category || site.defaultCategory || 'Notícias';
 

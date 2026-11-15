@@ -7,6 +7,7 @@ import { syncArticleToWordPress } from './wordpress-sync';
 import { extractArticle } from './article-extractor';
 import { uploadArticleJson, uploadFeedJson } from './r2-sync';
 import { executeMcpAgyRewrite } from './agy-mcp-service';
+import { parseRobustArticleJson, sanitizeArticleHtmlForPublish } from './article-cleaner';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -497,31 +498,12 @@ Por favor, reescreva em português com padrão editorial profissional e otimizad
       systemInstruction: systemPrompt,
     });
 
-    let parsed: {
-      title?: string;
-      content?: string;
-      excerpt?: string;
-      keywords?: string[];
-    } = {};
-
-    try {
-      // Remove possíveis blocos markdown como ```json ... ```
-      const cleaned = aiResult.output.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      // Fallback se não for JSON puro
-      parsed = {
-        title: article.originalTitle,
-        content: `<p>${aiResult.output.replace(/\n\n/g, '</p><p>')}</p>`,
-        excerpt: article.originalExcerpt || '',
-        keywords: ['noticias', 'tecnologia', 'atualidades'],
-      };
-    }
+    const parsed = parseRobustArticleJson(aiResult.output, article);
 
     let updated = dbRepo.updateCapturedArticle(articleId, {
       status: 'ready',
       aiTitle: parsed.title || article.originalTitle,
-      aiContent: parsed.content || article.originalContent,
+      aiContent: sanitizeArticleHtmlForPublish(parsed.content || article.originalContent),
       aiExcerpt: parsed.excerpt || article.originalExcerpt,
       aiSeoKeywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
     });
