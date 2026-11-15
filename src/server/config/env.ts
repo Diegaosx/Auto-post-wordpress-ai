@@ -64,6 +64,12 @@ export const env = {
   LLAMA_API_KEY: process.env.LLAMA_API_KEY || '',
   LLAMA_DEFAULT_MODEL: process.env.LLAMA_DEFAULT_MODEL || 'llama-3.3-70b-versatile',
 
+  // Painel AGY / Cluster Antigravity MCP Server
+  MCP_AGY_URL: process.env.MCP_AGY_URL || 'https://backend-agy.saletub.com/api/mcp/panel',
+  MCP_AGY_TOKEN: process.env.MCP_AGY_TOKEN || 'mcp_live_2a4d41f40d6306d9514e56e618fc64e12a59b4a6870a4aba',
+  MCP_AGY_MODEL: process.env.MCP_AGY_MODEL || 'gemini-3.8-flash',
+  MCP_IMAGE_STRATEGY: process.env.MCP_IMAGE_STRATEGY || 'temporal_advance',
+
   // Cloudflare R2 Edge Storage (100% via variáveis de ambiente)
   R2_ACCOUNT_ID: process.env.R2_ACCOUNT_ID || '',
   R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || '',

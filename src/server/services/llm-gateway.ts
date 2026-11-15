@@ -2,6 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import { env } from '../config/env';
 import { LLMProviderId } from '../../shared/types';
 import { dbRepo } from '../db/repository';
+import { testMcpConnection } from './agy-mcp-service';
 
 export interface LLMExecutionResult {
   provider: LLMProviderId;
@@ -238,6 +239,38 @@ export async function executeLlmPrompt(params: {
         provider: 'llama',
         model: llamaModel,
         output: `[Falha no Endpoint Customizado]: ${msg}`,
+        latencyMs: Date.now() - start,
+        liveApiUsed: false,
+      };
+    }
+  }
+
+  // ==========================================================================
+  // 4. PAINEL AGY / CLUSTER ANTIGRAVITY (MCP SERVER)
+  // ==========================================================================
+  if (provider === 'painel-agy') {
+    const mcpModel = params.model || settings.mcpAgyModel || 'gemini-3.8-flash';
+    const mcpUrl = params.baseUrl || settings.mcpAgyUrl || env.MCP_AGY_URL;
+    const mcpToken = params.apiKey || settings.mcpAgyToken || env.MCP_AGY_TOKEN;
+
+    try {
+      const mcpTest = await testMcpConnection(mcpUrl, mcpToken);
+      if (mcpTest.success) {
+        return {
+          provider: 'painel-agy',
+          model: mcpModel,
+          output: mcpTest.output || 'OK - Conexão com Painel AGY estabelecida com sucesso.',
+          latencyMs: mcpTest.latencyMs,
+          liveApiUsed: true,
+        };
+      } else {
+        throw new Error(mcpTest.error || 'Falha ao conectar com o Servidor MCP.');
+      }
+    } catch (err: any) {
+      return {
+        provider: 'painel-agy',
+        model: mcpModel,
+        output: `[Falha MCP Painel AGY]: ${err.message}`,
         latencyMs: Date.now() - start,
         liveApiUsed: false,
       };

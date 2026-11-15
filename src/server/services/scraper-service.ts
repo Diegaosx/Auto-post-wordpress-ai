@@ -6,6 +6,7 @@ import { CapturedArticle, NewsSource, ArticleRewriteOptions, LLMProviderId } fro
 import { syncArticleToWordPress } from './wordpress-sync';
 import { extractArticle } from './article-extractor';
 import { uploadArticleJson, uploadFeedJson } from './r2-sync';
+import { executeMcpAgyRewrite } from './agy-mcp-service';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -385,7 +386,76 @@ export async function rewriteArticleWithAi(
 
   const tone = options?.tone || targetSite?.aiTone || settings.defaultRewriteTone || 'jornalistico';
   const provider = (options?.provider || settings.aiProvider || 'openrouter') as LLMProviderId;
-  const model = options?.model || (provider === 'openrouter' ? settings.openRouterModel : (provider === 'gemini' ? settings.geminiModel : settings.llamaModel));
+  const model = options?.model || (provider === 'openrouter' ? settings.openRouterModel : (provider === 'gemini' ? settings.geminiModel : (provider === 'painel-agy' ? (settings.mcpAgyModel || 'gemini-3.8-flash') : settings.llamaModel)));
+
+  // ==========================================================================
+  // ROTA ESPECIALIZADA: PAINEL AGY / CLUSTER ANTIGRAVITY (MCP SERVER)
+  // Reescrita profunda + Geração de Imagem Inédita Anti-Plágio via SSE (Zero Timeout)
+  // ==========================================================================
+  if (provider === 'painel-agy') {
+    try {
+      const mcpResult = await executeMcpAgyRewrite({
+        article,
+        targetSite,
+        tone,
+        systemPrompt: settings.aiSystemPrompt,
+        mcpUrl: settings.mcpAgyUrl,
+        mcpToken: settings.mcpAgyToken,
+        mcpModel: model,
+        imageStrategy: settings.mcpImageStrategy || 'temporal_advance',
+        timeoutSeconds: settings.mcpTimeoutSeconds || 300,
+      });
+
+      const articleUpdates: Partial<CapturedArticle> = {
+        status: 'ready',
+        aiTitle: mcpResult.title,
+        aiContent: mcpResult.content,
+        aiExcerpt: mcpResult.excerpt,
+        aiSeoKeywords: mcpResult.keywords,
+      };
+
+      if (mcpResult.newImageUrl) {
+        articleUpdates.imageUrl = mcpResult.newImageUrl;
+        articleUpdates.mediaData = {
+          featuredImage: {
+            url: mcpResult.newImageUrl,
+            title: mcpResult.title,
+            alt: mcpResult.imageAlt || mcpResult.title,
+            caption: mcpResult.imageCaption || mcpResult.excerpt,
+          },
+        };
+      }
+
+      let updated = dbRepo.updateCapturedArticle(articleId, articleUpdates);
+      if (!updated) {
+        throw new Error('Falha ao salvar artigo reescrito pelo MCP Painel AGY.');
+      }
+
+      if (options?.autoPublish && options?.targetSiteId) {
+        await syncArticleToWordPress(articleId, options.targetSiteId);
+        updated = dbRepo.getCapturedArticleById(articleId) || updated;
+      }
+
+      if (settings.r2AutoSync !== false) {
+        try {
+          const r2Url = await uploadArticleJson(updated);
+          if (r2Url && r2Url !== updated.r2JsonUrl) {
+            updated = dbRepo.updateCapturedArticle(articleId, { r2JsonUrl: r2Url }) || updated;
+          }
+        } catch (r2Err: any) {
+          console.warn(`[Scraper] Falha ao atualizar R2 após reescrita MCP do artigo ${articleId}:`, r2Err.message);
+        }
+      }
+
+      return updated;
+    } catch (mcpErr: any) {
+      dbRepo.updateCapturedArticle(articleId, {
+        status: 'error',
+        errorMessage: mcpErr.message || 'Erro na reescrita via MCP Painel AGY',
+      });
+      throw mcpErr;
+    }
+  }
 
   let systemPrompt = settings.aiSystemPrompt || `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
 Sua missão é transformar a notícia original em uma reportagem 100% autoral, informativa, envolvente e otimizada para os mecanismos de busca.

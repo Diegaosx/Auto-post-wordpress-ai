@@ -64,6 +64,11 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     llamaApiKey: '',
     llamaBaseUrl: 'https://api.groq.com/openai/v1',
     llamaModel: 'llama-3.3-70b-versatile',
+    mcpAgyUrl: 'https://backend-agy.saletub.com/api/mcp/panel',
+    mcpAgyToken: '',
+    mcpAgyModel: 'gemini-3.8-flash',
+    mcpImageStrategy: 'temporal_advance',
+    mcpTimeoutSeconds: 300,
     aiTemperature: 0.7,
     aiSystemPrompt: '',
     autoRewriteArticles: true,
@@ -81,6 +86,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     openRouter: false,
     gemini: false,
     llama: false,
+    painelAgy: false,
     r2: false,
   });
 
@@ -112,6 +118,11 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           llamaApiKey: '',
           llamaBaseUrl: data.llamaBaseUrl || 'https://api.groq.com/openai/v1',
           llamaModel: data.llamaModel || 'llama-3.3-70b-versatile',
+          mcpAgyUrl: data.mcpAgyUrl || 'https://backend-agy.saletub.com/api/mcp/panel',
+          mcpAgyToken: '',
+          mcpAgyModel: data.mcpAgyModel || 'gemini-3.8-flash',
+          mcpImageStrategy: data.mcpImageStrategy || 'temporal_advance',
+          mcpTimeoutSeconds: data.mcpTimeoutSeconds ?? 300,
           aiTemperature: data.aiTemperature ?? 0.7,
           aiSystemPrompt: data.aiSystemPrompt || '',
           autoRewriteArticles: data.autoRewriteArticles ?? true,
@@ -128,6 +139,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           openRouter: Boolean(data.hasOpenRouterKey),
           gemini: Boolean(data.hasGeminiKey),
           llama: Boolean(data.hasLlamaKey),
+          painelAgy: Boolean(data.hasMcpAgyToken),
           r2: Boolean(data.hasR2Configured),
         });
         setSelectedAiTab(activeProv);
@@ -149,6 +161,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
       if (!payload.openRouterApiKey) delete payload.openRouterApiKey;
       if (!payload.geminiApiKey) delete payload.geminiApiKey;
       if (!payload.llamaApiKey) delete payload.llamaApiKey;
+      if (!payload.mcpAgyToken) delete payload.mcpAgyToken;
       if (!payload.r2SecretAccessKey) delete payload.r2SecretAccessKey;
 
       const res = await fetch('/api/settings', {
@@ -240,6 +253,10 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     } else if (targetProvider === 'gemini') {
       apiKey = form.geminiApiKey || '';
       model = form.geminiModel || '';
+    } else if (targetProvider === 'painel-agy') {
+      apiKey = form.mcpAgyToken || '';
+      model = form.mcpAgyModel || 'gemini-3.8-flash';
+      baseUrl = form.mcpAgyUrl || 'https://backend-agy.saletub.com/api/mcp/panel';
     } else {
       apiKey = form.llamaApiKey || '';
       model = form.llamaModel || '';
@@ -258,6 +275,8 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           apiKey: apiKey || undefined,
           model: model || undefined,
           baseUrl: baseUrl || undefined,
+          mcpUrl: baseUrl || undefined,
+          mcpToken: apiKey || undefined,
         }),
       });
 
@@ -463,7 +482,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* Opção OpenRouter */}
                 <div
                   onClick={() => setSelectedAiTab('openrouter')}
@@ -626,6 +645,63 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                           e.stopPropagation();
                           setForm({ ...form, aiProvider: 'llama' });
                           setSelectedAiTab('llama');
+                        }}
+                        className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
+                      >
+                        Ativar este Motor
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Opção Painel AGY (Cluster Antigravity / MCP) */}
+                <div
+                  onClick={() => setSelectedAiTab('painel-agy')}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    selectedAiTab === 'painel-agy'
+                      ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-indigo-600" />
+                        Painel AGY (MCP)
+                      </span>
+                      {form.aiProvider === 'painel-agy' ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold border border-emerald-300 shadow-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                          Ativo
+                        </span>
+                      ) : hasKeys.painelAgy ? (
+                        <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-medium border border-slate-200">
+                          Salvo
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">
+                          Não configurado
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Cluster Antigravity via SSE: reescrita aprofundada SEO e geração de fotos inéditas anti-plágio (Google Imagen 3).
+                    </p>
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-slate-100">
+                    {form.aiProvider === 'painel-agy' ? (
+                      <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        Motor Ativo em Produção
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setForm({ ...form, aiProvider: 'painel-agy' });
+                          setSelectedAiTab('painel-agy');
                         }}
                         className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
                       >
@@ -865,6 +941,178 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
               </div>
             )}
 
+            {/* Painel Específico do Painel AGY (Cluster Antigravity / MCP) */}
+            {selectedAiTab === 'painel-agy' && (
+              <div className="p-4 bg-indigo-50/30 rounded-lg border border-indigo-100 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-indigo-100/70">
+                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                    <Globe className="w-3.5 h-3.5 text-indigo-600" />
+                    Credenciais e Configurações Painel AGY (Cluster Antigravity / MCP)
+                  </div>
+                  {form.aiProvider === 'painel-agy' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                      Motor Ativo no Sistema (Reescrita & Fotos Inéditas)
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500">Credenciais Salvas (Motor Inativo)</span>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, aiProvider: 'painel-agy' })}
+                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                      >
+                        Definir como Motor Ativo
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      URL Endpoint do Servidor MCP
+                    </label>
+                    <input
+                      type="text"
+                      value={form.mcpAgyUrl}
+                      onChange={(e) => setForm({ ...form, mcpAgyUrl: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-indigo-500"
+                      placeholder="https://backend-agy.saletub.com/api/mcp/panel"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Suporta SSE persistente (/sse) com keepalives a cada 15s para eliminar erro 524 Cloudflare.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Token de Autenticação MCP ({hasKeys.painelAgy ? 'Configurada no Servidor ✓' : 'Não configurada'})
+                    </label>
+                    <input
+                      type="password"
+                      value={form.mcpAgyToken}
+                      onChange={(e) => setForm({ ...form, mcpAgyToken: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-indigo-500"
+                      placeholder={hasKeys.painelAgy ? '•••••••••••••••••••••••• (deixe vazio para manter a salva)' : 'mcp_live_...'}
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Chave bearer gerada no Painel AGY com escopo de conversas e computação em nuvem.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Modelo do Cluster Antigravity
+                    </label>
+                    <input
+                      type="text"
+                      value={form.mcpAgyModel}
+                      onChange={(e) => setForm({ ...form, mcpAgyModel: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
+                      placeholder="gemini-3.8-flash"
+                    />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {['gemini-3.8-flash', 'claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'beta-opus-5-5'].map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setForm({ ...form, mcpAgyModel: m })}
+                          className={`text-[10px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                            form.mcpAgyModel === m
+                              ? 'bg-indigo-600 text-white border-indigo-600 font-semibold'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Timeout Máximo por Turno (Segundos)
+                    </label>
+                    <input
+                      type="number"
+                      min={60}
+                      max={600}
+                      value={form.mcpTimeoutSeconds || 300}
+                      onChange={(e) => setForm({ ...form, mcpTimeoutSeconds: Number(e.target.value) || 300 })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
+                      placeholder="300"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Padrão 300s (5 minutos). O transporte via SSE mantém heartbeats regulares com a nuvem sem travar.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Estratégia de Criação de Imagem Anti-Plágio */}
+                <div className="pt-3 border-t border-indigo-100/70">
+                  <label className="block text-xs font-semibold text-indigo-950 mb-1">
+                    Estratégia de Criação de Imagem Inédita Anti-Plágio (Google Imagen 3)
+                  </label>
+                  <p className="text-[11px] text-slate-600 mb-2.5 leading-relaxed">
+                    Para blindar o portal contra cópia visual e notificações de direitos autorais, a imagem da matéria original é substituída por uma foto 100% autoral gerada pelo cluster:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div
+                      onClick={() => setForm({ ...form, mcpImageStrategy: 'temporal_advance' })}
+                      className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                        (form.mcpImageStrategy || 'temporal_advance') === 'temporal_advance'
+                          ? 'border-indigo-600 bg-indigo-50/70 ring-1 ring-indigo-600'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                          Avanço Temporal (Recomendado)
+                        </span>
+                        {(form.mcpImageStrategy || 'temporal_advance') === 'temporal_advance' && (
+                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
+                            Selecionado
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Inspeciona a imagem original e projeta a cena alguns segundos à frente no tempo (simulando continuidade realista, movimento de pessoas/veículos, novo ângulo e iluminação 8k). Imagem única sem plágio visual.
+                      </p>
+                    </div>
+
+                    <div
+                      onClick={() => setForm({ ...form, mcpImageStrategy: 'content_concept' })}
+                      className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                        form.mcpImageStrategy === 'content_concept'
+                          ? 'border-indigo-600 bg-indigo-50/70 ring-1 ring-indigo-600'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                          Criação Conceitual Fotorrealista
+                        </span>
+                        {form.mcpImageStrategy === 'content_concept' && (
+                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
+                            Selecionado
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Gera uma fotografia editorial inédita em alta resolução criada do zero com base no contexto do artigo, palavras-chave de SEO e assunto principal da reportagem.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Teste de Conexão com o Motor de IA */}
             <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
@@ -878,7 +1126,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                   <span>
                     {testingAi
                       ? 'Testando Conexão...'
-                      : `Testar Conexão (${selectedAiTab === 'gemini' ? 'Google Gemini' : selectedAiTab === 'openrouter' ? 'OpenRouter' : 'Groq / Custom'}) Agora`}
+                      : `Testar Conexão (${selectedAiTab === 'painel-agy' ? 'Painel AGY MCP' : selectedAiTab === 'gemini' ? 'Google Gemini' : selectedAiTab === 'openrouter' ? 'OpenRouter' : 'Groq / Custom'}) Agora`}
                   </span>
                 </button>
               </div>

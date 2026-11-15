@@ -1390,6 +1390,7 @@ async function startServer() {
       hasOpenRouterKey: Boolean(raw.openRouterApiKey),
       hasGeminiKey: Boolean(raw.geminiApiKey),
       hasLlamaKey: Boolean(raw.llamaApiKey),
+      hasMcpAgyToken: Boolean(raw.mcpAgyToken),
       hasR2Configured: Boolean(raw.r2AccountId && raw.r2AccessKeyId && raw.r2SecretAccessKey),
     });
   });
@@ -1406,6 +1407,9 @@ async function startServer() {
     }
     if (updates.llamaApiKey === '' && current.llamaApiKey) {
       delete updates.llamaApiKey;
+    }
+    if (updates.mcpAgyToken === '' && current.mcpAgyToken) {
+      delete updates.mcpAgyToken;
     }
     if (updates.r2SecretAccessKey === '' && current.r2SecretAccessKey) {
       delete updates.r2SecretAccessKey;
@@ -1450,14 +1454,14 @@ async function startServer() {
   });
 
   app.post('/api/settings/ai/test', requireAuth, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
-    const { provider, apiKey, model, baseUrl } = req.body || {};
+    const { provider, apiKey, model, baseUrl, mcpUrl, mcpToken } = req.body || {};
 
     try {
       const result = await executeLlmPrompt({
         provider,
-        apiKey: apiKey?.trim() || undefined,
+        apiKey: (apiKey || mcpToken)?.trim() || undefined,
         model: model?.trim() || undefined,
-        baseUrl: baseUrl?.trim() || undefined,
+        baseUrl: (baseUrl || mcpUrl)?.trim() || undefined,
         prompt: 'Responda estritamente esta frase: "OK - Motor de IA conectado com sucesso."',
       });
 

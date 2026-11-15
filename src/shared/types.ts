@@ -72,7 +72,7 @@ export interface QueueJobRecord {
   processedAt?: string;
 }
 
-export type LLMProviderId = 'gemini' | 'openrouter' | 'llama';
+export type LLMProviderId = 'gemini' | 'openrouter' | 'llama' | 'painel-agy';
 
 export interface InfrastructureStatus {
   database: {
@@ -257,6 +257,14 @@ export interface SystemSettings {
   llamaApiKey?: string;
   llamaBaseUrl?: string;
   llamaModel?: string;
+
+  // 2.1 Painel AGY / Cluster Antigravity (MCP Server)
+  mcpAgyUrl?: string;
+  mcpAgyToken?: string;
+  hasMcpAgyToken?: boolean;
+  mcpAgyModel?: string;
+  mcpImageStrategy?: 'temporal_advance' | 'content_concept';
+  mcpTimeoutSeconds?: number;
 
   aiTemperature: number;
   aiSystemPrompt: string;
