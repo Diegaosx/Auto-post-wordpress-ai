@@ -31,10 +31,67 @@ import {
   Search,
   Filter,
   Send,
+  Cloud,
+  Eye,
+  Code,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface WordPressSitesViewProps {
   token: string;
+}
+
+interface GeneratedArticleItem {
+  id: string;
+  site_id: string;
+  site_name: string;
+  site_url: string;
+  wp_post_id?: number | null;
+  wp_permalink?: string | null;
+  published_at: string;
+  title: string;
+  description: string;
+  excerpt: string;
+  content: string;
+  categories: string[];
+  tags: string[];
+  featured_image: {
+    url: string | null;
+    alt: string;
+    title: string;
+    caption: string;
+    description: string;
+  } | null;
+  seo: {
+    focus_keyword: string;
+    meta_title: string;
+    meta_description: string;
+    canonical_url?: string;
+    keywords: string[];
+    image_seo: {
+      alt: string;
+      title: string;
+      caption: string;
+      description: string;
+    };
+  };
+  original_source: {
+    source_id?: string;
+    source_name?: string;
+    original_url: string;
+    original_title: string;
+    original_excerpt?: string;
+    captured_at?: string;
+  };
+  ai_metadata?: {
+    tone?: string;
+    model?: string;
+    custom_instructions_applied?: boolean;
+    custom_instructions?: string;
+  };
+  r2_json_url?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export function WordPressSitesView({ token }: WordPressSitesViewProps) {
@@ -81,6 +138,82 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
   const [logSearch, setLogSearch] = useState<string>('');
   const [logSiteFilter, setLogSiteFilter] = useState<string>('all');
   const [logStatusFilter, setLogStatusFilter] = useState<string>('all');
+
+  // Generated Articles Modal & Inspection State
+  const [viewingArticlesSite, setViewingArticlesSite] = useState<WordPressSite | null>(null);
+  const [siteGeneratedArticles, setSiteGeneratedArticles] = useState<GeneratedArticleItem[]>([]);
+  const [loadingGeneratedArticles, setLoadingGeneratedArticles] = useState(false);
+  const [siteR2FeedUrl, setSiteR2FeedUrl] = useState<string | null>(null);
+  const [articlesSearchQuery, setArticlesSearchQuery] = useState('');
+  const [selectedArticleDetail, setSelectedArticleDetail] = useState<GeneratedArticleItem | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<'preview' | 'json'>('preview');
+  const [copiedJson, setCopiedJson] = useState(false);
+  const [isSyncingSiteR2, setIsSyncingSiteR2] = useState(false);
+  const [syncR2Feedback, setSyncR2Feedback] = useState<string | null>(null);
+
+  const handleOpenGeneratedArticles = async (site: WordPressSite) => {
+    setViewingArticlesSite(site);
+    setLoadingGeneratedArticles(true);
+    setArticlesSearchQuery('');
+    setSelectedArticleDetail(null);
+    setSyncR2Feedback(null);
+    try {
+      const res = await fetch(`/api/wordpress/sites/${site.id}/generated-articles`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSiteGeneratedArticles(data.articles || []);
+        setSiteR2FeedUrl(data.r2FeedUrl || null);
+      } else {
+        setActionMessage({ type: 'error', text: data.error || 'Erro ao carregar artigos gerados.' });
+      }
+    } catch (err: any) {
+      setActionMessage({ type: 'error', text: err.message || 'Falha ao buscar artigos gerados.' });
+    } finally {
+      setLoadingGeneratedArticles(false);
+    }
+  };
+
+  const handleSyncSiteR2 = async () => {
+    if (!viewingArticlesSite) return;
+    setIsSyncingSiteR2(true);
+    setSyncR2Feedback(null);
+    try {
+      const res = await fetch(`/api/wordpress/sites/${viewingArticlesSite.id}/sync-r2-articles`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncR2Feedback(data.message || 'Sincronizado com o R2 com sucesso!');
+        if (data.r2FeedUrl) setSiteR2FeedUrl(data.r2FeedUrl);
+        const reloadRes = await fetch(`/api/wordpress/sites/${viewingArticlesSite.id}/generated-articles`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const reloadData = await reloadRes.json();
+        if (reloadData.success) {
+          setSiteGeneratedArticles(reloadData.articles || []);
+        }
+      } else {
+        setSyncR2Feedback(`Erro: ${data.error || 'Falha na sincronização'}`);
+      }
+    } catch (err: any) {
+      setSyncR2Feedback(`Erro: ${err.message || 'Falha de conexão com R2'}`);
+    } finally {
+      setIsSyncingSiteR2(false);
+    }
+  };
+
+  const handleCopyJsonToClipboard = (obj: any) => {
+    try {
+      navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+      setCopiedJson(true);
+      setTimeout(() => setCopiedJson(false), 2500);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   const fetchSites = async () => {
     try {
@@ -1004,13 +1137,15 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
                     {/* Status & Articles Badges */}
                     <div className="flex items-center gap-2 flex-wrap justify-end">
-                      <span
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-xs"
-                        title="Total de artigos gerados e publicados para este portal WordPress"
+                      <button
+                        type="button"
+                        onClick={() => handleOpenGeneratedArticles(site)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 active:bg-indigo-200 border border-indigo-200 hover:border-indigo-300 shadow-xs cursor-pointer transition-all"
+                        title="Clique para ver a lista de artigos gerados e inspecionar o JSON estruturado no R2"
                       >
                         <FileText className="w-3.5 h-3.5 text-indigo-600" />
                         {site.publishedArticlesCount ?? 0} {site.publishedArticlesCount === 1 ? 'artigo gerado' : 'artigos gerados'}
-                      </span>
+                      </button>
 
                       {site.status === 'connected' && (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -1100,8 +1235,17 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                       </span>
                     </div>
 
-                    <div className="p-2.5 bg-indigo-50/70 rounded-lg border border-indigo-100 col-span-2 sm:col-span-1">
-                      <span className="text-indigo-600 block text-[10px] font-semibold uppercase tracking-wider">Artigos Gerados</span>
+                    <div
+                      onClick={() => handleOpenGeneratedArticles(site)}
+                      className="p-2.5 bg-indigo-50/70 hover:bg-indigo-100/90 rounded-lg border border-indigo-100 hover:border-indigo-200 col-span-2 sm:col-span-1 cursor-pointer transition-all group"
+                      title="Clique para ver todos os artigos criados e inspecionar a estrutura JSON no R2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-indigo-600 block text-[10px] font-semibold uppercase tracking-wider group-hover:text-indigo-800">
+                          Artigos Gerados
+                        </span>
+                        <ExternalLink className="w-2.5 h-2.5 text-indigo-400 group-hover:text-indigo-600 transition-colors" />
+                      </div>
                       <span className="font-bold text-indigo-950 flex items-center gap-1.5 mt-0.5">
                         <FileText className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                         {site.publishedArticlesCount ?? 0} {site.publishedArticlesCount === 1 ? 'matéria enviada' : 'matérias enviadas'}
@@ -1119,8 +1263,18 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                 </div>
 
                 {/* Actions Footer */}
-                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenGeneratedArticles(site)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors cursor-pointer shadow-2xs"
+                      title="Abrir página com todos os artigos gerados, metadados e JSON no Cloudflare R2"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Artigos Gerados ({site.publishedArticlesCount ?? 0})</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => handleOpenEditScreen(site)}
@@ -1461,6 +1615,572 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                   Ver Artigo no WordPress
                 </a>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Artigos Gerados para o Portal */}
+      {viewingArticlesSite && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[92vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 via-white to-indigo-50/40">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200 shrink-0">
+                  <FileText className="w-5 h-5 text-indigo-100" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      Artigos Gerados — {viewingArticlesSite.siteName}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      {siteGeneratedArticles.length} {siteGeneratedArticles.length === 1 ? 'artigo' : 'artigos'}
+                    </span>
+                  </div>
+                  <a
+                    href={viewingArticlesSite.siteUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-indigo-600 hover:underline inline-flex items-center gap-1 mt-0.5"
+                  >
+                    {viewingArticlesSite.siteUrl}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {siteR2FeedUrl && (
+                  <a
+                    href={siteR2FeedUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
+                    title="Abrir o arquivo JSON consolidado de todos os artigos deste site no Cloudflare R2"
+                  >
+                    <Cloud className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Ver JSON Geral no R2</span>
+                    <ExternalLink className="w-3 h-3 opacity-70" />
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleSyncSiteR2}
+                  disabled={isSyncingSiteR2}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
+                  title="Salvar/atualizar todos os artigos gerados deste portal no Cloudflare R2"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSiteR2 ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingSiteR2 ? 'Sincronizando...' : 'Sincronizar no R2'}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setViewingArticlesSite(null);
+                    setSiteGeneratedArticles([]);
+                    setSelectedArticleDetail(null);
+                  }}
+                  className="text-slate-400 hover:text-slate-600 font-bold p-1 text-lg rounded-lg hover:bg-slate-100 transition-colors ml-1"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Sync Feedback Alert */}
+            {syncR2Feedback && (
+              <div className="px-5 py-2.5 bg-indigo-50 border-b border-indigo-100 text-xs text-indigo-900 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Cloud className="w-4 h-4 text-indigo-600" />
+                  <span>{syncR2Feedback}</span>
+                </div>
+                <button
+                  onClick={() => setSyncR2Feedback(null)}
+                  className="text-indigo-400 hover:text-indigo-700 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Search & Info Toolbar */}
+            <div className="p-4 border-b border-slate-100 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={articlesSearchQuery}
+                  onChange={(e) => setArticlesSearchQuery(e.target.value)}
+                  placeholder="Buscar artigos por título, tag, categoria ou SEO..."
+                  className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
+                />
+              </div>
+
+              <div className="text-xs text-slate-500 flex items-center gap-2">
+                <span>
+                  Exibindo{' '}
+                  <strong className="text-slate-800">
+                    {
+                      siteGeneratedArticles.filter((art) => {
+                        if (!articlesSearchQuery.trim()) return true;
+                        const q = articlesSearchQuery.toLowerCase();
+                        return (
+                          art.title.toLowerCase().includes(q) ||
+                          (art.excerpt || '').toLowerCase().includes(q) ||
+                          (art.tags || []).some((t) => t.toLowerCase().includes(q)) ||
+                          (art.seo?.focus_keyword || '').toLowerCase().includes(q)
+                        );
+                      }).length
+                    }
+                  </strong>{' '}
+                  de <strong className="text-slate-800">{siteGeneratedArticles.length}</strong> artigos gerados
+                </span>
+              </div>
+            </div>
+
+            {/* Articles List Content */}
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              {loadingGeneratedArticles ? (
+                <div className="p-16 text-center text-slate-400">
+                  <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                  <p className="text-sm font-semibold text-slate-700">Carregando artigos gerados...</p>
+                  <p className="text-xs text-slate-400 mt-1">Buscando metadados e estrutura JSON salva para este portal.</p>
+                </div>
+              ) : siteGeneratedArticles.length === 0 ? (
+                <div className="p-16 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <FileText className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <h4 className="text-sm font-bold text-slate-700">Nenhum artigo gerado para este portal ainda</h4>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+                    Quando o robô ou o teste de post gerar matérias para este site, elas ficarão listadas aqui com JSON completo e metadados no R2.
+                  </p>
+                </div>
+              ) : (
+                (() => {
+                  const filtered = siteGeneratedArticles.filter((art) => {
+                    if (!articlesSearchQuery.trim()) return true;
+                    const q = articlesSearchQuery.toLowerCase();
+                    return (
+                      art.title.toLowerCase().includes(q) ||
+                      (art.excerpt || '').toLowerCase().includes(q) ||
+                      (art.tags || []).some((t) => t.toLowerCase().includes(q)) ||
+                      (art.seo?.focus_keyword || '').toLowerCase().includes(q)
+                    );
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-10 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+                        Nenhum artigo encontrado com o termo pesquisado.
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((art) => {
+                    const hasImage = Boolean(art.featured_image?.url);
+
+                    return (
+                      <div
+                        key={art.id}
+                        className="p-4 bg-white rounded-xl border border-slate-200/90 hover:border-indigo-300 hover:shadow-xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                      >
+                        <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                          {/* Image Thumbnail */}
+                          <div className="w-20 h-16 sm:w-24 sm:h-18 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 shrink-0 relative flex items-center justify-center">
+                            {hasImage ? (
+                              <img
+                                src={art.featured_image!.url!}
+                                alt={art.featured_image?.alt || art.title}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex flex-col items-center justify-center text-[10px] text-slate-400">
+                                <ImageIcon className="w-4 h-4 mb-0.5 text-slate-300" />
+                                <span>Sem Foto</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-400 mb-1">
+                              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold border border-indigo-100">
+                                {art.categories?.[0] || 'Geral'}
+                              </span>
+                              {art.wp_post_id && (
+                                <span className="text-slate-500 font-mono font-medium">
+                                  ID WP: #{art.wp_post_id}
+                                </span>
+                              )}
+                              <span>•</span>
+                              <span>{new Date(art.published_at).toLocaleString('pt-BR')}</span>
+                              {art.seo?.focus_keyword && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-emerald-700 font-medium">
+                                    SEO: "{art.seo.focus_keyword}"
+                                  </span>
+                                </>
+                              )}
+                            </div>
+
+                            <h4 className="text-sm font-bold text-slate-900 leading-snug line-clamp-1 hover:text-indigo-600 transition-colors">
+                              {art.title}
+                            </h4>
+
+                            {art.excerpt && (
+                              <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                                {art.excerpt}
+                              </p>
+                            )}
+
+                            {/* Tags */}
+                            {art.tags && art.tags.length > 0 && (
+                              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                                {art.tags.slice(0, 4).map((tag, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-600 rounded font-medium"
+                                  >
+                                    #{tag}
+                                  </span>
+                                ))}
+                                {art.tags.length > 4 && (
+                                  <span className="text-[10px] text-slate-400 font-medium">
+                                    +{art.tags.length - 4}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 shrink-0 justify-end border-t md:border-t-0 pt-2 md:pt-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedArticleDetail(art);
+                              setActiveDetailTab('preview');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                            title="Inspecionar artigo completo, metadados e código JSON"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Inspecionar</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedArticleDetail(art);
+                              setActiveDetailTab('json');
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg transition-colors cursor-pointer"
+                            title="Ver JSON estruturado"
+                          >
+                            <Code className="w-3.5 h-3.5 text-slate-600" />
+                            <span>{'{ }'}</span>
+                          </button>
+
+                          {art.r2_json_url && (
+                            <a
+                              href={art.r2_json_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors cursor-pointer"
+                              title="Abrir JSON no Cloudflare R2"
+                            >
+                              <Cloud className="w-4 h-4 text-amber-600" />
+                            </a>
+                          )}
+
+                          {art.wp_permalink && (
+                            <a
+                              href={art.wp_permalink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                              title="Abrir post publicado no WordPress"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Os artigos e JSONs são gerados exclusivamente para este site e salvos no Cloudflare R2.
+              </span>
+              <button
+                type="button"
+                onClick={() => setViewingArticlesSite(null)}
+                className="px-5 py-2 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-lg shadow cursor-pointer transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Detalhes do Artigo Gerado & JSON Completo */}
+      {selectedArticleDetail && (
+        <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div className="min-w-0 flex-1 mr-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                    {selectedArticleDetail.site_name}
+                  </span>
+                  {selectedArticleDetail.wp_post_id && (
+                    <span className="text-xs text-slate-500 font-mono">
+                      Post #{selectedArticleDetail.wp_post_id}
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-base font-bold text-slate-900 mt-1 line-clamp-1">
+                  {selectedArticleDetail.title}
+                </h3>
+              </div>
+
+              {/* Tabs Switcher */}
+              <div className="flex items-center gap-1 bg-slate-200/80 p-1 rounded-xl shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setActiveDetailTab('preview')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    activeDetailTab === 'preview'
+                      ? 'bg-white text-indigo-600 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Artigo & SEO</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveDetailTab('json')}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    activeDetailTab === 'json'
+                      ? 'bg-white text-indigo-600 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Code className="w-3.5 h-3.5" />
+                  <span>JSON Estruturado</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => setSelectedArticleDetail(null)}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 text-lg rounded-lg hover:bg-slate-100 transition-colors ml-3"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Tab 1: Editorial Preview & SEO */}
+            {activeDetailTab === 'preview' && (
+              <div className="p-6 overflow-y-auto space-y-5 flex-1">
+                {/* Featured Image Box */}
+                {selectedArticleDetail.featured_image?.url && (
+                  <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                    <div className="max-h-72 w-full overflow-hidden bg-slate-900 flex items-center justify-center">
+                      <img
+                        src={selectedArticleDetail.featured_image.url}
+                        alt={selectedArticleDetail.featured_image.alt}
+                        className="w-full max-h-72 object-cover"
+                      />
+                    </div>
+                    <div className="p-3 bg-slate-50/90 border-t border-slate-200 text-xs text-slate-600 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <strong className="text-slate-700 block text-[10px] uppercase tracking-wider">Alt Text (Acessibilidade)</strong>
+                        <span className="italic">{selectedArticleDetail.featured_image.alt || 'Não informado'}</span>
+                      </div>
+                      <div>
+                        <strong className="text-slate-700 block text-[10px] uppercase tracking-wider">Legenda / Caption</strong>
+                        <span>{selectedArticleDetail.featured_image.caption || 'Sem legenda'}</span>
+                      </div>
+                      <div>
+                        <strong className="text-slate-700 block text-[10px] uppercase tracking-wider">Título SEO Imagem</strong>
+                        <span>{selectedArticleDetail.featured_image.title || 'Padrão'}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Title & Excerpt */}
+                <div>
+                  <h1 className="text-xl font-extrabold text-slate-900 leading-snug">
+                    {selectedArticleDetail.title}
+                  </h1>
+                  {selectedArticleDetail.excerpt && (
+                    <p className="text-xs text-slate-600 italic mt-2 border-l-2 border-indigo-500 pl-3 leading-relaxed">
+                      {selectedArticleDetail.excerpt}
+                    </p>
+                  )}
+                </div>
+
+                {/* SEO Meta Grid */}
+                <div className="p-3.5 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2.5">
+                  <span className="text-[10px] font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                    Metadados de Otimização para SEO WordPress
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="p-2.5 bg-white rounded-lg border border-slate-100">
+                      <strong className="text-slate-500 block text-[10px] uppercase">Palavra-chave Foco</strong>
+                      <span className="font-bold text-indigo-700 mt-0.5 block">{selectedArticleDetail.seo?.focus_keyword || 'notícias'}</span>
+                    </div>
+                    <div className="p-2.5 bg-white rounded-lg border border-slate-100">
+                      <strong className="text-slate-500 block text-[10px] uppercase">Categoria no WP</strong>
+                      <span className="font-semibold text-slate-800 mt-0.5 block">{selectedArticleDetail.categories?.join(', ') || 'Geral'}</span>
+                    </div>
+                    <div className="p-2.5 bg-white rounded-lg border border-slate-100 sm:col-span-2">
+                      <strong className="text-slate-500 block text-[10px] uppercase">Tags / Palavras-chave Semânticas</strong>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                        {(selectedArticleDetail.tags || []).map((tag, idx) => (
+                          <span key={idx} className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-[11px] font-medium">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rendered HTML Content */}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                    Conteúdo Formatado Publicado
+                  </h4>
+                  <div
+                    className="p-5 bg-slate-50 rounded-xl border border-slate-200/80 text-xs text-slate-800 space-y-3 leading-relaxed [&>h2]:text-base [&>h2]:font-bold [&>h2]:text-slate-900 [&>h2]:mt-4 [&>h2]:mb-2 [&>h3]:text-sm [&>h3]:font-bold [&>h3]:text-slate-900 [&>h3]:mt-3 [&>h3]:mb-1 [&>p]:leading-relaxed [&>ul]:list-disc [&>ul]:pl-5 [&>ul]:space-y-1"
+                    dangerouslySetInnerHTML={{ __html: selectedArticleDetail.content }}
+                  />
+                </div>
+
+                {/* Original Source Reference */}
+                {selectedArticleDetail.original_source?.original_url && (
+                  <div className="p-3 bg-slate-100 rounded-xl text-xs text-slate-500 flex items-center justify-between">
+                    <div>
+                      <span>Fonte Original: </span>
+                      <strong className="text-slate-700">{selectedArticleDetail.original_source.source_name || 'Desconhecida'}</strong>
+                      <span className="mx-2">•</span>
+                      <span className="italic">"{selectedArticleDetail.original_source.original_title}"</span>
+                    </div>
+                    <a
+                      href={selectedArticleDetail.original_source.original_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 hover:underline inline-flex items-center gap-1 font-semibold"
+                    >
+                      Abrir Fonte <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab 2: Structured JSON Viewer */}
+            {activeDetailTab === 'json' && (
+              <div className="p-6 flex flex-col flex-1 overflow-hidden space-y-3">
+                {/* JSON Toolbar */}
+                <div className="flex items-center justify-between bg-slate-100 p-2.5 rounded-xl text-xs">
+                  <div className="flex items-center gap-2">
+                    <Code className="w-4 h-4 text-indigo-600" />
+                    <span className="font-semibold text-slate-700">
+                      Estrutura JSON Completa do Artigo
+                    </span>
+                    {selectedArticleDetail.r2_json_url && (
+                      <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                        Hospedado no Cloudflare R2
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyJsonToClipboard(selectedArticleDetail)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-2xs transition-colors cursor-pointer"
+                    >
+                      {copiedJson ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="text-emerald-600">Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copiar JSON</span>
+                        </>
+                      )}
+                    </button>
+
+                    {selectedArticleDetail.r2_json_url && (
+                      <a
+                        href={selectedArticleDetail.r2_json_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
+                      >
+                        <Cloud className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Abrir no R2</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pre / Code Block */}
+                <div className="flex-1 overflow-y-auto bg-slate-950 rounded-xl p-4 border border-slate-800 text-xs font-mono text-emerald-400 select-all">
+                  <pre className="whitespace-pre-wrap break-all">
+                    {JSON.stringify(selectedArticleDetail, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Artigo gerado para o portal <strong className="text-slate-700">{selectedArticleDetail.site_name}</strong>
+              </span>
+
+              <div className="flex items-center gap-2">
+                {selectedArticleDetail.wp_permalink && (
+                  <a
+                    href={selectedArticleDetail.wp_permalink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-sm cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Ver no WordPress</span>
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedArticleDetail(null)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg cursor-pointer"
+                >
+                  Voltar para Lista
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { dbRepo } from '../db/repository';
-import { CapturedArticle } from '../../shared/types';
+import { CapturedArticle, WordPressSite } from '../../shared/types';
+import { sanitizeArticleHtmlForPublish } from './article-cleaner';
 
 export interface R2Config {
   accountId: string;
@@ -314,5 +315,230 @@ export async function testR2Connection(customConfig?: Partial<R2Config>): Promis
       success: false,
       error: `Erro ao conectar com Cloudflare R2: ${err.message}`,
     };
+  }
+}
+
+export interface GeneratedArticleStructure {
+  id: string;
+  site_id: string;
+  site_name: string;
+  site_url: string;
+  wp_post_id?: number | null;
+  wp_permalink?: string | null;
+  published_at: string;
+  title: string;
+  description: string;
+  excerpt: string;
+  content: string;
+  categories: string[];
+  tags: string[];
+  featured_image: {
+    url: string | null;
+    alt: string;
+    title: string;
+    caption: string;
+    description: string;
+  } | null;
+  seo: {
+    focus_keyword: string;
+    meta_title: string;
+    meta_description: string;
+    canonical_url?: string;
+    keywords: string[];
+    image_seo: {
+      alt: string;
+      title: string;
+      caption: string;
+      description: string;
+    };
+  };
+  original_source: {
+    source_id?: string;
+    source_name?: string;
+    original_url: string;
+    original_title: string;
+    original_excerpt?: string;
+    captured_at?: string;
+  };
+  ai_metadata?: {
+    tone?: string;
+    model?: string;
+    custom_instructions_applied?: boolean;
+    custom_instructions?: string;
+  };
+  r2_json_url?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function buildGeneratedArticleStructure(
+  site: WordPressSite,
+  article: CapturedArticle,
+  publicationMeta?: { wpPostId?: number; permalink?: string; publishedAt?: string },
+  r2PublicUrlBase?: string
+): GeneratedArticleStructure {
+  const title = (article.aiTitle || article.originalTitle || '').trim();
+  const excerpt = (article.aiExcerpt || article.originalExcerpt || '').trim();
+  const content = sanitizeArticleHtmlForPublish(article.aiContent || article.originalContent || '');
+  const featImg = article.mediaData?.featuredImage;
+  const imgUrl = featImg?.url || article.imageUrl || null;
+  const imgAlt = featImg?.alt || title;
+  const imgTitle = featImg?.title || title;
+  const imgCaption = featImg?.caption || article.subtitle || excerpt;
+  const imgDesc = excerpt;
+
+  const wpPostId = publicationMeta?.wpPostId || article.wpPostId || null;
+  const wpPermalink =
+    publicationMeta?.permalink ||
+    article.wpPermalink ||
+    (wpPostId ? `${site.siteUrl.replace(/\/$/, '')}/?p=${wpPostId}` : site.siteUrl);
+  const publishedAt =
+    publicationMeta?.publishedAt || article.publishedAt || article.createdAt || new Date().toISOString();
+
+  const r2JsonUrl = r2PublicUrlBase
+    ? `${r2PublicUrlBase.replace(/\/$/, '')}/sites/${site.id}/artigos/${article.id}.json`
+    : (article.r2JsonUrl || undefined);
+
+  const keywords =
+    article.aiSeoKeywords && article.aiSeoKeywords.length > 0
+      ? article.aiSeoKeywords
+      : (article.tags || ['notícias', 'atualidades']);
+  const focusKeyword = keywords[0] || 'notícias';
+
+  return {
+    id: article.id,
+    site_id: site.id,
+    site_name: site.siteName,
+    site_url: site.siteUrl,
+    wp_post_id: wpPostId,
+    wp_permalink: wpPermalink,
+    published_at: publishedAt,
+    title,
+    description: excerpt,
+    excerpt,
+    content,
+    categories: [site.defaultCategory || 'Notícias'],
+    tags: keywords,
+    featured_image: imgUrl
+      ? {
+          url: imgUrl,
+          alt: imgAlt,
+          title: imgTitle,
+          caption: imgCaption,
+          description: imgDesc,
+        }
+      : null,
+    seo: {
+      focus_keyword: focusKeyword,
+      meta_title: title,
+      meta_description: excerpt.slice(0, 160),
+      canonical_url: wpPermalink || undefined,
+      keywords,
+      image_seo: {
+        alt: imgAlt,
+        title: imgTitle,
+        caption: imgCaption,
+        description: imgDesc,
+      },
+    },
+    original_source: {
+      source_id: article.sourceId,
+      source_name: article.sourceName,
+      original_url: article.originalUrl,
+      original_title: article.originalTitle,
+      original_excerpt: article.originalExcerpt,
+      captured_at: article.createdAt,
+    },
+    ai_metadata: {
+      tone: site.aiTone || 'jornalistico',
+      model: site.aiModel,
+      custom_instructions_applied: Boolean(site.aiCustomInstructions?.trim()),
+      custom_instructions: site.aiCustomInstructions || undefined,
+    },
+    r2_json_url: r2JsonUrl,
+    created_at: article.createdAt || publishedAt,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Salva a estrutura completa de um artigo gerado para um site no Cloudflare R2
+ */
+export async function uploadSiteArticleJson(
+  site: WordPressSite,
+  article: CapturedArticle,
+  publicationMeta?: { wpPostId?: number; permalink?: string; publishedAt?: string }
+): Promise<string | null> {
+  const config = await getR2Config();
+  if (!config) return null;
+
+  const key = `sites/${site.id}/artigos/${article.id}.json`;
+  const publicUrl = `${config.publicUrl}/${key}`;
+
+  const payload = buildGeneratedArticleStructure(site, article, publicationMeta, config.publicUrl);
+  payload.r2_json_url = publicUrl;
+
+  const client = createR2Client(config);
+  try {
+    const command = new PutObjectCommand({
+      Bucket: config.bucketName,
+      Key: key,
+      Body: Buffer.from(JSON.stringify(payload, null, 2), 'utf-8'),
+      ContentType: 'application/json; charset=utf-8',
+      CacheControl: 'public, max-age=3600, s-maxage=7200',
+    });
+    await client.send(command);
+    console.log(`[R2 Site Sync] Artigo gerado salvo no R2 para site ${site.siteName}: ${publicUrl}`);
+    return publicUrl;
+  } catch (err: any) {
+    console.error(`[R2 Site Sync Error] Falha ao enviar artigo do site para R2:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Atualiza o feed consolidado de artigos gerados de um site no Cloudflare R2
+ */
+export async function uploadSiteArticlesFeedJson(
+  site: WordPressSite,
+  items: Array<{ article: CapturedArticle; publication?: { wpPostId?: number; permalink?: string; publishedAt?: string } }>
+): Promise<string | null> {
+  const config = await getR2Config();
+  if (!config) return null;
+
+  const key = `sites/${site.id}/artigos.json`;
+  const publicUrl = `${config.publicUrl}/${key}`;
+
+  const structuredArticles = items.map((it) =>
+    buildGeneratedArticleStructure(site, it.article, it.publication, config.publicUrl)
+  );
+
+  const feedPayload = {
+    site_id: site.id,
+    site_name: site.siteName,
+    site_url: site.siteUrl,
+    r2_feed_url: publicUrl,
+    total_articles: structuredArticles.length,
+    updated_at: new Date().toISOString(),
+    articles: structuredArticles,
+  };
+
+  const client = createR2Client(config);
+  try {
+    const command = new PutObjectCommand({
+      Bucket: config.bucketName,
+      Key: key,
+      Body: Buffer.from(JSON.stringify(feedPayload, null, 2), 'utf-8'),
+      ContentType: 'application/json; charset=utf-8',
+      CacheControl: 'public, max-age=60, s-maxage=120',
+    });
+    await client.send(command);
+    console.log(
+      `[R2 Site Sync] Feed de artigos gerados salvo no R2 para ${site.siteName} (${structuredArticles.length} matérias): ${publicUrl}`
+    );
+    return publicUrl;
+  } catch (err: any) {
+    console.error(`[R2 Site Sync Error] Falha ao enviar feed de artigos do site para R2:`, err.message);
+    return null;
   }
 }

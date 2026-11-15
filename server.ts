@@ -29,7 +29,13 @@ import {
   syncAllArticlesToR2,
   syncFeedsToR2,
 } from './src/server/services/scraper-service';
-import { testR2Connection } from './src/server/services/r2-sync';
+import {
+  testR2Connection,
+  getR2Config,
+  buildGeneratedArticleStructure,
+  uploadSiteArticleJson,
+  uploadSiteArticlesFeedJson,
+} from './src/server/services/r2-sync';
 import { syncArticleToWordPress, testWordPressConnection } from './src/server/services/wordpress-sync';
 import {
   UserRole,
@@ -1290,6 +1296,111 @@ async function startServer() {
       res.status(500).json({ success: false, error: err.message || 'Erro inesperado ao gerar e publicar artigo de teste.' });
     }
   });
+
+  // Obter Lista Completa de Artigos Gerados de um Portal (com Metadados de SEO, R2 e Estrutura JSON)
+  app.get(
+    '/api/wordpress/sites/:id/generated-articles',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const site = dbRepo.getWordPressSiteById(req.params.id);
+        if (!site) {
+          res.status(404).json({ success: false, error: 'Portal WordPress não encontrado.' });
+          return;
+        }
+        if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+          res.status(403).json({ success: false, error: 'Acesso negado para este portal.' });
+          return;
+        }
+
+        const r2Config = await getR2Config();
+        const r2BaseUrl = r2Config?.publicUrl;
+        const r2FeedUrl = r2BaseUrl ? `${r2BaseUrl}/sites/${site.id}/artigos.json` : null;
+
+        const rawArticles = dbRepo.getPublishedArticlesForSite(site.id);
+
+        const structuredArticles = rawArticles.map((it) =>
+          buildGeneratedArticleStructure(site, it.article, it.publication, r2BaseUrl)
+        );
+
+        res.json({
+          success: true,
+          site: {
+            id: site.id,
+            siteName: site.siteName,
+            siteUrl: site.siteUrl,
+            publishedArticlesCount: structuredArticles.length,
+          },
+          r2FeedUrl,
+          total: structuredArticles.length,
+          articles: structuredArticles,
+        });
+      } catch (err: any) {
+        console.error('[Generated Articles Error]', err);
+        res.status(500).json({ success: false, error: err.message || 'Erro ao carregar artigos gerados.' });
+      }
+    }
+  );
+
+  // Sincronizar / Salvar Todos os Artigos Gerados deste Portal no Cloudflare R2
+  app.post(
+    '/api/wordpress/sites/:id/sync-r2-articles',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const site = dbRepo.getWordPressSiteById(req.params.id);
+        if (!site) {
+          res.status(404).json({ success: false, error: 'Portal WordPress não encontrado.' });
+          return;
+        }
+        if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+          res.status(403).json({ success: false, error: 'Acesso negado para este portal.' });
+          return;
+        }
+
+        const r2Config = await getR2Config();
+        if (!r2Config) {
+          res.status(400).json({
+            success: false,
+            error: 'Cloudflare R2 não configurado nas Configurações da plataforma.',
+          });
+          return;
+        }
+
+        const rawArticles = dbRepo.getPublishedArticlesForSite(site.id);
+        if (rawArticles.length === 0) {
+          res.status(400).json({
+            success: false,
+            error: 'Nenhum artigo foi gerado para este portal ainda.',
+          });
+          return;
+        }
+
+        let syncedCount = 0;
+        for (const it of rawArticles) {
+          try {
+            await uploadSiteArticleJson(site, it.article, it.publication);
+            syncedCount++;
+          } catch (uploadErr: any) {
+            console.warn(`[R2 Batch Sync] Falha ao enviar ${it.article.id}:`, uploadErr.message);
+          }
+        }
+
+        const feedUrl = await uploadSiteArticlesFeedJson(site, rawArticles);
+
+        res.json({
+          success: true,
+          synced: syncedCount,
+          total: rawArticles.length,
+          r2FeedUrl: feedUrl,
+          message: `${syncedCount} matérias foram sincronizadas e salvas com sucesso em JSON no Cloudflare R2!`,
+        });
+      } catch (err: any) {
+        console.error('[R2 Batch Sync Error]', err);
+        res.status(500).json({ success: false, error: err.message || 'Erro ao sincronizar com R2.' });
+      }
+    }
+  );
 
   // WordPress Activity Logs
   app.get('/api/wordpress/logs', requireAuth, (req: AuthenticatedRequest, res: Response) => {

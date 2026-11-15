@@ -790,6 +790,56 @@ class PostgresRepository {
     return artIds.size;
   }
 
+  public getPublishedArticlesForSite(siteId: string): Array<{
+    article: CapturedArticle;
+    publication?: { wpPostId?: number; permalink?: string; publishedAt?: string };
+  }> {
+    const results: Array<{
+      article: CapturedArticle;
+      publication?: { wpPostId?: number; permalink?: string; publishedAt?: string };
+    }> = [];
+    const seenArtIds = new Set<string>();
+
+    if (this.articlePublications) {
+      for (const [key, pub] of this.articlePublications.entries()) {
+        const [artId, sId] = key.split(':');
+        if (sId === siteId && !seenArtIds.has(artId)) {
+          const art = this.getCapturedArticleById(artId);
+          if (art) {
+            seenArtIds.add(artId);
+            results.push({ article: art, publication: pub });
+          }
+        }
+      }
+    }
+
+    if (this.state.capturedArticles) {
+      for (const art of this.state.capturedArticles) {
+        if (!seenArtIds.has(art.id)) {
+          if (art.wpSiteId === siteId || (art.publishedSiteIds && art.publishedSiteIds.includes(siteId))) {
+            seenArtIds.add(art.id);
+            results.push({
+              article: art,
+              publication: {
+                wpPostId: art.wpPostId || undefined,
+                permalink: art.wpPermalink || undefined,
+                publishedAt: art.publishedAt || art.createdAt,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    results.sort((a, b) => {
+      const timeA = new Date(a.publication?.publishedAt || a.article.publishedAt || a.article.createdAt).getTime();
+      const timeB = new Date(b.publication?.publishedAt || b.article.publishedAt || b.article.createdAt).getTime();
+      return timeB - timeA;
+    });
+
+    return results;
+  }
+
   public getWordPressSites(userId?: string): WordPressSite[] {
     if (!this.state.wpSites) this.state.wpSites = [];
     const list = !userId ? this.state.wpSites : this.state.wpSites.filter((s) => s.userId === userId);

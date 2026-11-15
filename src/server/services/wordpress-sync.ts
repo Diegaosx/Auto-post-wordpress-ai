@@ -1,6 +1,7 @@
 import { dbRepo } from '../db/repository';
 import { CapturedArticle, WordPressSite } from '../../shared/types';
 import { sanitizeArticleHtmlForPublish } from './article-cleaner';
+import { uploadSiteArticleJson } from './r2-sync';
 
 export async function syncArticleToWordPress(
   articleId: string,
@@ -178,6 +179,15 @@ export async function syncArticleToWordPress(
 
   // Registra no banco de dados para o Escudo Anti-Duplicação
   await dbRepo.recordArticlePublication(article.id, site.id, wpPostId, permalink);
+
+  // Faz upload assíncrono do JSON estruturado do artigo gerado para o Cloudflare R2
+  uploadSiteArticleJson(site, article, {
+    wpPostId,
+    permalink,
+    publishedAt: new Date().toISOString(),
+  }).catch((r2Err: any) =>
+    console.warn(`[WordPress Sync] Aviso ao salvar JSON no R2 para site ${site.siteName}:`, r2Err.message)
+  );
 
   // Atualiza artigo no banco
   dbRepo.updateCapturedArticle(article.id, {
