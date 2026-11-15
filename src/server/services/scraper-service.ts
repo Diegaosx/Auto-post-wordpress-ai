@@ -419,9 +419,10 @@ export async function rewriteArticleWithAi(
         articleUpdates.mediaData = {
           featuredImage: {
             url: mcpResult.newImageUrl,
-            title: mcpResult.title,
+            title: mcpResult.imageTitle || mcpResult.title,
             alt: mcpResult.imageAlt || mcpResult.title,
             caption: mcpResult.imageCaption || mcpResult.excerpt,
+            base64: mcpResult.imageBase64,
           },
         };
       }

@@ -51,29 +51,52 @@ export async function syncArticleToWordPress(
 
   // 1. Pré-carregar imagem em base64 se disponível (elimina 100% de falhas de CDN/firewall no WordPress)
   let imageBase64: string | undefined = undefined;
-  if (article.imageUrl) {
-    try {
-      const imgRes = await fetch(article.imageUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        },
-        signal: AbortSignal.timeout(12000),
-      });
-      if (imgRes.ok) {
-        const arrayBuf = await imgRes.arrayBuffer();
-        if (arrayBuf.byteLength > 0 && arrayBuf.byteLength <= 8 * 1024 * 1024) {
-          const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
-          imageBase64 = `data:${contentType};base64,${Buffer.from(arrayBuf).toString('base64')}`;
-        }
+  let finalImageUrl: string | undefined = undefined;
+
+  // Prioridade A: Base64 já validado e pré-carregado no mediaData pelo MCP Antigravity
+  if (article.mediaData?.featuredImage?.base64) {
+    imageBase64 = article.mediaData.featuredImage.base64;
+    finalImageUrl = article.mediaData.featuredImage.url || article.imageUrl || undefined;
+  }
+
+  // Prioridade B: Baixar a partir de imageUrl ou mediaData
+  if (!imageBase64) {
+    const rawUrl = article.imageUrl || article.mediaData?.featuredImage?.url;
+    if (rawUrl) {
+      let normalized = rawUrl.trim();
+      if (normalized.includes('adsensecustomsearchads.com.br')) {
+        normalized = normalized.replace(/https?:\/\/[^\/]*adsensecustomsearchads\.com\.br/, 'https://cdn.saletub.com');
       }
-    } catch (imgErr: any) {
-      console.warn(`[WordPress Sync] Aviso: Não foi possível pré-carregar buffer da imagem (${article.imageUrl}):`, imgErr.message);
+      finalImageUrl = normalized;
+      try {
+        const imgRes = await fetch(normalized, {
+          redirect: 'follow',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (imgRes.ok) {
+          const arrayBuf = await imgRes.arrayBuffer();
+          if (arrayBuf.byteLength >= 500 && arrayBuf.byteLength <= 10 * 1024 * 1024) {
+            const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+            imageBase64 = `data:${contentType};base64,${Buffer.from(arrayBuf).toString('base64')}`;
+          }
+        }
+      } catch (imgErr: any) {
+        console.warn(`[WordPress Sync] Aviso: Não foi possível pré-carregar buffer da imagem (${normalized}):`, imgErr.message);
+      }
     }
   }
 
   const focusKeyword = article.aiSeoKeywords && article.aiSeoKeywords.length > 0 ? article.aiSeoKeywords[0] : 'notícias';
+  const featMeta = article.mediaData?.featuredImage;
+  const imageAlt = featMeta?.alt || postTitle;
+  const imageTitle = featMeta?.title || postTitle;
+  const imageCaption = featMeta?.caption || article.subtitle || postExcerpt.slice(0, 160);
+  const imageDesc = postExcerpt;
 
   const payload = {
     article_id: article.id,
@@ -85,13 +108,16 @@ export async function syncArticleToWordPress(
     status: postStatus,
     categories: [categoryName],
     tags: article.aiSeoKeywords && article.aiSeoKeywords.length > 0 ? article.aiSeoKeywords : ['notícias', 'atualidades'],
-    image_url: article.imageUrl || undefined,
-    featured_image: article.imageUrl || undefined,
+    image_url: finalImageUrl || article.imageUrl || undefined,
+    featured_image: finalImageUrl || article.imageUrl || undefined,
     image_base64: imageBase64,
-    image_alt: postTitle,
-    image_title: postTitle,
-    image_caption: article.subtitle || postExcerpt.slice(0, 160),
-    image_description: postExcerpt,
+    image_alt: imageAlt,
+    alt_text: imageAlt,
+    image_title: imageTitle,
+    image_caption: imageCaption,
+    caption: imageCaption,
+    image_description: imageDesc,
+    description: imageDesc,
     focus_keyword: focusKeyword,
     keywords: article.aiSeoKeywords || [],
     seo_title: postTitle,

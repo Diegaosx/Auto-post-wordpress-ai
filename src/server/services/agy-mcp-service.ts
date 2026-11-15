@@ -44,12 +44,73 @@ export interface McpRewriteResult {
   excerpt: string;
   keywords: string[];
   newImageUrl?: string | null;
+  imageBase64?: string;
   imageAlt?: string;
   imageCaption?: string;
+  imageTitle?: string;
   durationSeconds?: number;
   computeHours?: number;
   remainingHours?: number;
   conversationId?: string;
+}
+
+/**
+ * Normaliza URLs de artefatos e imagens geradas no Painel AGY / Cloudflare CDN
+ * Corrige automaticamente domínios legados ou quebrados (ex: ssl-cdn-cloudflare.adsensecustomsearchads.com.br -> cdn.saletub.com)
+ */
+export function normalizeImageUrl(url: string): string {
+  if (!url || typeof url !== 'string') return '';
+  let cleaned = url.trim().replace(/^['"<]+|['">]+$/g, '');
+  
+  if (cleaned.includes('ssl-cdn-cloudflare.adsensecustomsearchads.com.br')) {
+    cleaned = cleaned.replace('https://ssl-cdn-cloudflare.adsensecustomsearchads.com.br', 'https://cdn.saletub.com');
+  }
+  if (cleaned.includes('adsensecustomsearchads.com.br')) {
+    cleaned = cleaned.replace(/https?:\/\/[^\/]*adsensecustomsearchads\.com\.br/, 'https://cdn.saletub.com');
+  }
+  if (cleaned.startsWith('/uploads/chat-artifacts/') || cleaned.startsWith('/chat-artifacts/')) {
+    const p = cleaned.replace(/^\/uploads/, '');
+    cleaned = `https://cdn.saletub.com${p}`;
+  }
+  return cleaned;
+}
+
+/**
+ * Valida se uma URL responde com HTTP 200 e tipo de imagem válido, baixando o buffer binário
+ */
+export async function fetchAndValidateImage(
+  url: string
+): Promise<{ valid: boolean; buffer?: Buffer; contentType?: string; finalUrl?: string }> {
+  try {
+    const normalized = normalizeImageUrl(url);
+    if (!normalized.startsWith('http')) return { valid: false };
+
+    const res = await fetch(normalized, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      },
+    });
+
+    if (!res.ok) return { valid: false };
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.startsWith('image/')) return { valid: false };
+
+    const arrayBuf = await res.arrayBuffer();
+    if (arrayBuf.byteLength < 500) return { valid: false };
+
+    return {
+      valid: true,
+      buffer: Buffer.from(arrayBuf),
+      contentType,
+      finalUrl: res.url || normalized,
+    };
+  } catch {
+    return { valid: false };
+  }
 }
 
 /**
@@ -249,70 +310,97 @@ export async function executeMcpAgyRewrite(options: McpRewriteOptions): Promise<
   const isHttps = parsedSse.protocol === 'https:';
   const client = isHttps ? https : http;
 
+  const hasOriginalImage = Boolean(article.imageUrl && article.imageUrl.trim());
   const originalRefImage = article.imageUrl || '';
-  const baseContent = (article.cleanText || article.originalContent || '').slice(0, 4000);
+  const baseContent = (article.cleanText || article.originalContent || '').slice(0, 4500);
 
-  // Montagem da Diretriz de Imagem Inédita Anti-Plágio
+  // 1. Montagem da Diretriz de Imagem Inédita Anti-Plágio (com ou sem foto na fonte)
   let imageDirectivePrompt = '';
-  if (imageStrategy === 'temporal_advance') {
-    imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: AVANÇO TEMPORAL & CONTINUIDADE VISUAL (ANTI-PLÁGIO)]:
-1. A matéria original continha a imagem de referência: "${originalRefImage || 'foto jornalística contextual'}".
-2. É ESTRITAMENTE PROIBIDO usar a imagem original diretamente para eliminar qualquer risco de plágio ou infração autoral.
-3. Você DEVE acionar IMEDIATAMENTE a ferramenta 'generate_image' com AspectRatio='16:9' e Prompt fotográfico fotorrealista hiperdetalhado (8k, Google Imagen 3 DeepMind).
-4. CONCEITO DO AVANÇO TEMPORAL: Projete a cena alguns segundos ou instantes à frente no tempo em relação à imagem original. Simule a continuação natural da narrativa visual (ex: pessoas em movimento ou deslocamento contínuo, veículos avançando, novo ângulo de visão dinâmico e iluminação fotográfica fotojornalística de alto padrão).
+  if (hasOriginalImage) {
+    if (imageStrategy === 'temporal_advance') {
+      imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: AVANÇO TEMPORAL & CONTINUIDADE VISUAL (ANTI-PLÁGIO)]:
+1. A matéria original continha a imagem de referência: "${originalRefImage}".
+2. É ESTRITAMENTE PROIBIDO usar a imagem original diretamente para eliminar 100% dos riscos de plágio ou notificação autoral.
+3. Você DEVE acionar IMEDIATAMENTE a ferramenta nativa 'generate_image' com AspectRatio='16:9' e Prompt fotográfico fotorrealista hiperdetalhado (8k, Google Imagen 3 DeepMind).
+4. CONCEITO DO AVANÇO TEMPORAL: Projete a cena alguns segundos ou instantes à frente no tempo em relação à imagem original. Simule a continuação natural da narrativa visual (ex: pessoas em movimento ou comemoração, novo ângulo dinâmico, iluminação de alto padrão fotojornalístico).
 5. NUNCA responda apenas dizendo que a imagem será gerada: chame agora mesmo a ferramenta 'generate_image'.`;
-  } else {
-    imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO CONCEITUAL EDITORIAL]:
+    } else {
+      imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO CONCEITUAL EDITORIAL]:
 1. É ESTRITAMENTE PROIBIDO usar a imagem original diretamente.
-2. Você DEVE acionar IMEDIATAMENTE a ferramenta 'generate_image' com AspectRatio='16:9' para criar uma NOVA fotografia profissional em alta resolução (8k, realismo fotográfico jornalístico, Google Imagen 3 DeepMind).
+2. Você DEVE acionar IMEDIATAMENTE a ferramenta nativa 'generate_image' com AspectRatio='16:9' para criar uma NOVA fotografia profissional em alta resolução (8k, realismo fotográfico jornalístico, Google Imagen 3 DeepMind).
 3. A imagem deve traduzir com precisão e beleza estética o tema central da notícia e as palavras-chave principais.
 4. NUNCA responda apenas dizendo que a imagem será gerada: chame agora mesmo a ferramenta 'generate_image'.`;
+    }
+  } else {
+    imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO FOTOGRÁFICA DO ZERO (FONTE ORIGINAL SEM FOTO)]:
+1. ATENÇÃO CRÍTICA: A matéria original NÃO POSSUI FOTO DE DESTAQUE ('Sem Foto').
+2. NENHUM artigo publicado no portal pode ficar sem imagem de destaque!
+3. Você DEVE acionar OBRIGATORIAMENTE e IMEDIATAMENTE a ferramenta nativa 'generate_image' com AspectRatio='16:9' para criar uma fotografia editorial inédita de alto impacto e ultra-realismo (8k, Google Imagen 3 DeepMind).
+4. Crie um prompt de imagem fotográfica hiper-realista retratando com fidelidade o contexto central, as figuras públicas citadas, o ambiente institucional ou a cena da reportagem.
+5. NUNCA responda apenas dizendo que a imagem será gerada: chame agora mesmo a ferramenta 'generate_image'.`;
   }
 
-  // Montagem do Prompt Completo
+  // 2. Diretrizes Exclusivas do Site com PRIORIDADE MÁXIMA
   let customSiteInstructions = '';
   if (targetSite?.aiCustomInstructions && targetSite.aiCustomInstructions.trim()) {
-    customSiteInstructions = `\n[DIRETRIZES EXCLUSIVAS DO SITE "${targetSite.siteName}"]:
-${targetSite.aiCustomInstructions.trim()}
-(Aplique com prioridade máxima as diretrizes acima)\n`;
+    customSiteInstructions = `
+======================================================================
+[DIRETRIZES EDITORIAIS MANDATÓRIAS DO SITE "${targetSite.siteName}"]:
+ATENÇÃO PRIORITÁRIA: Este portal possui regras editoriais exclusivas definidas pelo proprietário do site. Você DEVE seguir CADA UMA DELAS com a mais alta prioridade:
+>>> ${targetSite.aiCustomInstructions.trim()} <<<
+
+COMO APLICAR ESSAS DIRETRIZES NO ARTIGO:
+- Se solicitar TOM DESCONTRAÍDO, JOVEM OU DINÂMICO: adote um tom leve, engajador e ágil, com estilo de internet conectado ao público leitor.
+- Se solicitar RESUMO EM TÓPICOS: inclua obrigatoriamente logo após a introdução uma seção <h2>Resumo da Notícia</h2> ou <h2>Destaques Rápidos</h2> com <ul><li>...</li></ul> resumindo os pontos fundamentais.
+- Se solicitar CHAMADA PARA DEBATE NOS COMENTÁRIOS: o artigo DEVE OBRIGATORIAMENTE terminar com um subtítulo (ex: <h2>Participe do Debate</h2> ou <h2>E você, o que achou?</h2>) e parágrafo instigando os leitores a responderem e debaterem na seção de comentários do site.
+- Se solicitar FOCO EM SEO ON-PAGE: construa subtítulos semânticos <h2> e <h3> com palavras-chave de cauda longa e termos de busca orgânica.
+======================================================================
+`;
   }
 
-  const promptMessage = `Você é um jornalista investigativo sênior, editor-chefe e especialista em SEO para WordPress.
-Sua missão é transformar a notícia original abaixo em uma reportagem 100% autoral, aprofundada, envolvente e perfeitamente formatada para publicação imediata.
+  const promptMessage = `Você é um jornalista sênior, editor-chefe investigativo e especialista em SEO On-Page para WordPress.
+Sua missão é transformar a notícia original abaixo em uma reportagem 100% autoral, aprofundada, envolvente e perfeitamente formatada para publicação imediata no portal.
 
-Tom editorial solicitado: ${tone}
 ${customSiteInstructions}
+
+[REGRA SUPREMA E INVIOLÁVEL: REESCRITA 100% AUTORAL - ZERO PLÁGIO]
+1. É TERMINANTEMENTE PROIBIDO copiar e colar frases, trechos ou períodos literais da matéria original.
+2. Você é o autor desta nova reportagem. Reescreva tudo com seu próprio vocabulário jornalístico, estilo, ritmo e estruturação de texto.
+3. Mantenha 100% de precisão e fidelidade aos FATOS, NOMES DE PESSOAS, LOCAIS, DATAS, HORÁRIOS, NÚMEROS e DADOS TÉCNICOS.
+4. Qualquer ferramenta de detecção de plágio deve atestar 100% de originalidade textual.
+
 ${imageDirectivePrompt}
 
 [DADOS DA NOTÍCIA ORIGINAL]:
 Título Original: ${article.originalTitle}
 ${article.subtitle ? `Subtítulo: ${article.subtitle}\n` : ''}${article.author ? `Autor Original: ${article.author}\n` : ''}Fonte Original: ${article.originalUrl}
-Conteúdo Base:
+Conteúdo da Notícia:
 ${baseContent}
 
-[REGRAS MANDATÓRIAS DE REDAÇÃO E ESTRUTURA]:
-1. Reescreva do zero com padrão jornalístico impecável. Nunca faça cópia literal.
-2. Formate o corpo do artigo ESTRITAMENTE em HTML limpo, usando <h2>, <h3>, parágrafos <p> ricos e listas <ul><li>.
-3. Não inclua tags de documento como <html>, <body> ou <!DOCTYPE>.
-4. Crie um Título impactante com alto gatilho de leitura sem sensacionalismo falso.
-5. Crie um Excerpt / Meta Descrição de até 160 caracteres com excelente gancho.
-6. Forneça de 4 a 8 palavras-chave/tags de SEO estratégicas.
-7. Forneça o Alt Text (para acessibilidade da imagem) e Legenda Jornalística descritiva para a nova fotografia gerada.
+[ESTRUTURA TÉCNICA DO ARTIGO]:
+1. Formate o corpo do artigo ESTRITAMENTE em HTML limpo, usando <h2>, <h3>, parágrafos <p> ricos e listas <ul><li>.
+2. Não inclua tags de documento como <html>, <head>, <body> ou <!DOCTYPE>.
+3. Crie um Título impactante com alto gatilho de leitura (CTR) sem sensacionalismo falso.
+4. Crie um Excerpt / Meta Descrição de até 160 caracteres com excelente gancho editorial.
+5. Forneça de 4 a 8 palavras-chave/tags de SEO estratégicas.
+6. Forneça o Alt Text (para acessibilidade da imagem), Título SEO e Legenda Jornalística descritiva para a nova fotografia gerada.
 
 [FORMATO DE SAÍDA OBRIGATÓRIO]:
 Ao concluir a execução de ferramentas e redação, entregue a resposta final estruturada dentro de um único bloco JSON no formato:
 \`\`\`json
 {
   "title": "Título Marcante e Otimizado",
-  "content": "<h2>Contexto e Análise</h2><p>Parágrafos...</p>",
+  "content": "<h2>Subtítulo Semântico</h2><p>Parágrafo autoral...</p>",
   "excerpt": "Meta descrição de até 160 caracteres com alto CTR...",
   "keywords": ["tag1", "tag2", "tag3", "tag4"],
+  "image_url": "URL gerada ou deixe vazio",
   "image_alt": "Texto alternativo descritivo da nova fotografia gerada",
-  "image_caption": "Legenda editorial jornalística para a imagem"
+  "image_caption": "Legenda editorial jornalística para a imagem",
+  "image_title": "Título SEO da fotografia"
 }
 \`\`\``;
 
-  console.log(`[MCP AGY] Iniciando turno de reescrita no cluster Antigravity (Modelo: ${mcpModel}, Estratégia Imagem: ${imageStrategy})...`);
+  console.log(`[MCP AGY] Iniciando turno de reescrita no cluster Antigravity (Modelo: ${mcpModel}, Estratégia Imagem: ${imageStrategy}, Sem Foto Original: ${!hasOriginalImage})...`);
 
   const { postUrl } = resolveMcpEndpoints(mcpUrl);
 
@@ -427,13 +515,15 @@ Ao concluir a execução de ferramentas e redação, entregue a resposta final e
             console.log(
               `[MCP AGY] Turno concluído no cluster com sucesso em ${Math.round((Date.now() - startTime) / 1000)}s!`
             );
-            return processMcpResponse(
+            return await processMcpResponse(
               {
                 result: {
                   content: [{ type: 'text', text: assistantMsg.content }],
                 },
               },
-              article
+              article,
+              convData,
+              convId
             );
           }
         }
@@ -451,7 +541,12 @@ Ao concluir a execução de ferramentas e redação, entregue a resposta final e
 /**
  * Processa e extrai o JSON editorial e a nova imagem gerada a partir da resposta do MCP
  */
-function processMcpResponse(rpcResponse: any, article: CapturedArticle): McpRewriteResult {
+async function processMcpResponse(
+  rpcResponse: any,
+  article: CapturedArticle,
+  convData?: any,
+  convId?: string
+): Promise<McpRewriteResult> {
   if (rpcResponse.result?.isError) {
     const errMsg = rpcResponse.result?.content?.[0]?.text || 'Erro desconhecido retornado pela ferramenta MCP';
     throw new Error(`Falha no processamento do agente Antigravity: ${errMsg}`);
@@ -478,6 +573,7 @@ function processMcpResponse(rpcResponse: any, article: CapturedArticle): McpRewr
     keywords?: string[];
     image_alt?: string;
     image_caption?: string;
+    image_title?: string;
     image_url?: string;
   } = {};
 
@@ -503,47 +599,66 @@ function processMcpResponse(rpcResponse: any, article: CapturedArticle): McpRewr
     };
   }
 
-  // 2. Extração da Nova Imagem Inédita Anti-Plágio
-  // A) Procura no corpo da resposta markdown por imagens Cloudflare R2 ou URLs externas criadas
-  let generatedImageUrl: string | null = null;
+  // 2. Coleta de Todos os Candidatos de Imagem Inédita Anti-Plágio
+  const imageCandidates: string[] = [];
 
-  // Busca markdown ![...](https://...)
+  // A) Imagem explícita indicada no JSON
+  if (parsedArticle.image_url && typeof parsedArticle.image_url === 'string' && parsedArticle.image_url.trim()) {
+    imageCandidates.push(normalizeImageUrl(parsedArticle.image_url));
+  }
+
+  // B) Artefatos criados no payload ou na conversa do cluster
+  const combinedArtifacts = [...artifactsCreated, ...(Array.isArray(convData?.artifacts) ? convData.artifacts : [])];
+  for (const art of combinedArtifacts) {
+    if (art.publicUrl) imageCandidates.push(normalizeImageUrl(art.publicUrl));
+    if (art.url) imageCandidates.push(normalizeImageUrl(art.url));
+    if (convId && art.id && art.filename && /\.(jpg|jpeg|png|webp)$/i.test(art.filename)) {
+      imageCandidates.push(`https://cdn.saletub.com/chat-artifacts/${convId}/${art.id}/${art.filename}`);
+      imageCandidates.push(`https://backend-agy.saletub.com/uploads/chat-artifacts/${convId}/${art.id}/${art.filename}`);
+    }
+  }
+
+  // C) Links markdown ![...](https://...)
   const mdImgMatches = [...assistantText.matchAll(/!\[[^\]]*\]\((https?:\/\/[^\s\)]+)\)/gi)];
-  if (mdImgMatches.length > 0) {
-    // Seleciona a primeira imagem válida retornada pelo agente
-    for (const m of mdImgMatches) {
-      const urlCandidate = m[1];
-      if (urlCandidate && !urlCandidate.includes('example.com') && !urlCandidate.includes('placeholder')) {
-        generatedImageUrl = urlCandidate;
-        break;
-      }
+  for (const m of mdImgMatches) {
+    const candidate = normalizeImageUrl(m[1]);
+    if (candidate && !candidate.includes('example.com') && !candidate.includes('placeholder')) {
+      imageCandidates.push(candidate);
     }
   }
 
-  // B) Se não achou no markdown, procura em links diretos para a CDN Cloudflare R2
-  if (!generatedImageUrl) {
-    const r2Match = assistantText.match(/https?:\/\/[^\s'"<>]+\.(?:jpg|jpeg|png|webp)/i);
-    if (r2Match) {
-      generatedImageUrl = r2Match[0];
+  // D) URLs completas citadas no texto para extensões de imagem
+  const rawUrlMatches = [...assistantText.matchAll(/https?:\/\/[^\s'"<>]+\.(?:jpg|jpeg|png|webp)/gi)];
+  for (const m of rawUrlMatches) {
+    const candidate = normalizeImageUrl(m[0]);
+    if (candidate && !imageCandidates.includes(candidate)) {
+      imageCandidates.push(candidate);
     }
   }
 
-  // C) Verifica se veio no JSON explícito
-  if (!generatedImageUrl && parsedArticle.image_url && typeof parsedArticle.image_url === 'string') {
-    generatedImageUrl = parsedArticle.image_url;
-  }
+  // 3. Validação Ativa e Download do Buffer da Imagem
+  let validatedImageUrl: string | null = null;
+  let validatedBase64: string | undefined = undefined;
 
-  // D) Verifica se há algum artefato de imagem criado retornado na telemetria
-  if (!generatedImageUrl && artifactsCreated.length > 0) {
-    const imgArt = artifactsCreated.find((a) => a.type === 'image' || (a.filename && /\.(jpg|jpeg|png|webp)$/i.test(a.filename)));
-    if (imgArt && imgArt.publicUrl) {
-      generatedImageUrl = imgArt.publicUrl;
+  for (const candidate of imageCandidates) {
+    const check = await fetchAndValidateImage(candidate);
+    if (check.valid && check.buffer && check.contentType) {
+      validatedImageUrl = check.finalUrl || candidate;
+      validatedBase64 = `data:${check.contentType};base64,${check.buffer.toString('base64')}`;
+      console.log(`[MCP AGY] Imagem gerada validada com sucesso (${check.contentType}, ${check.buffer.length} bytes): ${validatedImageUrl}`);
+      break;
     }
   }
 
-  // Se nenhuma imagem foi gerada, mantém a original como fallback de segurança
-  if (!generatedImageUrl) {
-    generatedImageUrl = article.imageUrl || null;
+  // Fallback: Se nenhuma imagem gerada foi validada e a matéria original tinha foto, valida a original
+  if (!validatedImageUrl && article.imageUrl) {
+    const origCheck = await fetchAndValidateImage(article.imageUrl);
+    if (origCheck.valid && origCheck.buffer && origCheck.contentType) {
+      validatedImageUrl = origCheck.finalUrl || normalizeImageUrl(article.imageUrl);
+      validatedBase64 = `data:${origCheck.contentType};base64,${origCheck.buffer.toString('base64')}`;
+    } else {
+      validatedImageUrl = normalizeImageUrl(article.imageUrl);
+    }
   }
 
   return {
@@ -551,12 +666,14 @@ function processMcpResponse(rpcResponse: any, article: CapturedArticle): McpRewr
     content: parsedArticle.content || article.originalContent,
     excerpt: parsedArticle.excerpt || article.originalExcerpt || '',
     keywords: Array.isArray(parsedArticle.keywords) ? parsedArticle.keywords : ['noticias', 'atualidades'],
-    newImageUrl: generatedImageUrl,
+    newImageUrl: validatedImageUrl,
+    imageBase64: validatedBase64,
     imageAlt: parsedArticle.image_alt || parsedArticle.title || article.originalTitle,
     imageCaption: parsedArticle.image_caption || parsedArticle.excerpt || '',
+    imageTitle: parsedArticle.image_title || parsedArticle.title || article.originalTitle,
     durationSeconds: computeTelemetria.duracao_segundos,
     computeHours: computeTelemetria.horas_consumidas_turno,
     remainingHours: computeTelemetria.saldo_restante_horas,
-    conversationId: payload.conversation_id,
+    conversationId: convId || payload.conversation_id,
   };
 }

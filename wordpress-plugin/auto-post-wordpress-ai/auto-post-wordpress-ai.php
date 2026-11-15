@@ -3,7 +3,7 @@
  * Plugin Name: Auto Post WordPress AI
  * Plugin URI: https://github.com/Diegaosx/Auto-post-wordpress-ai
  * Description: Sincronização automatizada e publicação de artigos com Inteligência Artificial via REST API segura.
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: Auto Post AI Team
  * License: GPL v2 or later
  * Text Domain: auto-post-wordpress-ai
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('AUTO_POST_AI_VERSION', '1.2.0');
+define('AUTO_POST_AI_VERSION', '1.2.1');
 define('AUTO_POST_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AUTO_POST_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AUTO_POST_AI_DEFAULT_API_URL', '{{API_URL}}');
@@ -805,6 +805,14 @@ class AutoPostWordPressAI {
 
         $attach_data = wp_generate_attachment_metadata($attachment_id, $upload['file']);
         wp_update_attachment_metadata($attachment_id, $attach_data);
+
+        // Atualizar explicitamente metadados de título, legenda e descrição do anexo
+        wp_update_post(array(
+            'ID'           => $attachment_id,
+            'post_title'   => $title ?: sanitize_file_name(pathinfo($filename, PATHINFO_FILENAME)),
+            'post_content' => $description,
+            'post_excerpt' => $caption,
+        ));
 
         // Definir texto alternativo SEO
         if (!empty($alt_text)) {

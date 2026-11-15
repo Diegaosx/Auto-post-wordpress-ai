@@ -181,6 +181,7 @@ export interface ArticleMediaData {
     alt?: string;
     title?: string;
     caption?: string;
+    base64?: string;
   } | null;
   internalImages?: Array<{
     url: string;
