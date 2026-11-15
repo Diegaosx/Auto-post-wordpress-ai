@@ -577,7 +577,7 @@ export async function syncArticleToR2(articleId: string): Promise<string | null>
  * Sincroniza todos os artigos capturados para o Cloudflare R2
  */
 export async function syncAllArticlesToR2(): Promise<{ total: number; synced: number; feedsSynced: boolean }> {
-  const articles = dbRepo.getCapturedArticles({ limit: 500 });
+  const articles = dbRepo.getCapturedArticles({ limit: 2000 });
   let synced = 0;
 
   for (const art of articles) {

@@ -124,11 +124,20 @@ export function ScraperView({ token }: ScraperViewProps) {
     }
   };
 
+  const formatCaptureDateTime = (dateStr?: string | null) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const date = d.toLocaleDateString('pt-BR');
+    const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    return `${date} às ${time}`;
+  };
+
   const fetchData = async () => {
     try {
       const [srcRes, artRes, sitesRes] = await Promise.all([
         fetch('/api/scraper/sources', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/scraper/articles', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/scraper/articles?limit=2000', { headers: { Authorization: `Bearer ${token}` } }),
         fetch('/api/wordpress/sites', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
 
@@ -752,8 +761,12 @@ export function ScraperView({ token }: ScraperViewProps) {
                   <div className="flex items-center flex-wrap gap-2 mb-1">
                     <span className="text-[11px] font-bold text-indigo-600">{art.sourceName}</span>
                     <span className="text-slate-300">•</span>
-                    <span className="text-[11px] text-slate-400">
-                      {art.publishedAt ? new Date(art.publishedAt).toLocaleDateString('pt-BR') : ''}
+                    <span
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md"
+                      title={`Capturado no sistema em ${formatCaptureDateTime(art.createdAt || art.publishedAt)}`}
+                    >
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      {formatCaptureDateTime(art.createdAt || art.publishedAt)}
                     </span>
                     <span className="text-slate-300">•</span>
 
@@ -1292,6 +1305,10 @@ export function ScraperView({ token }: ScraperViewProps) {
               <div className="flex flex-wrap gap-2 text-xs">
                 <span className="px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 font-medium border border-emerald-200 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" /> Capturado
+                </span>
+                <span className="px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 font-medium flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-slate-500" />
+                  Capturado em: {formatCaptureDateTime(previewArticle.createdAt || previewArticle.publishedAt)}
                 </span>
                 {previewArticle.wpPermalink && (
                   <a

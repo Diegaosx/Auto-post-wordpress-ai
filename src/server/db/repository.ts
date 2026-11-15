@@ -280,7 +280,7 @@ class PostgresRepository {
     }));
 
     // Captured Articles
-    const articlesRes = await this.pool.query('SELECT * FROM captured_articles ORDER BY created_at DESC LIMIT 500');
+    const articlesRes = await this.pool.query('SELECT * FROM captured_articles ORDER BY created_at DESC LIMIT 5000');
     this.state.capturedArticles = articlesRes.rows.map((r: any) => ({
       id: r.id,
       sourceId: r.source_id,
@@ -1049,7 +1049,8 @@ class PostgresRepository {
           a.sourceName.toLowerCase().includes(q)
       );
     }
-    return list.slice(0, params?.limit ?? 100);
+    const limit = params?.limit ?? 1000;
+    return limit > 0 ? list.slice(0, limit) : list;
   }
 
   public getCapturedArticleById(id: string): CapturedArticle | null {
@@ -1075,8 +1076,8 @@ class PostgresRepository {
       createdAt: now,
     };
     this.state.capturedArticles.unshift(article);
-    if (this.state.capturedArticles.length > 500) {
-      this.state.capturedArticles = this.state.capturedArticles.slice(0, 500);
+    if (this.state.capturedArticles.length > 5000) {
+      this.state.capturedArticles = this.state.capturedArticles.slice(0, 5000);
     }
     this.persist();
 

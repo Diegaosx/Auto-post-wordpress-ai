@@ -1194,6 +1194,103 @@ async function startServer() {
     }
   });
 
+  // Test WordPress Site: Rewrite Latest Article with AI & Publish Immediately
+  app.post('/api/wordpress/sites/:id/publish-latest-test', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const site = dbRepo.getWordPressSiteById(req.params.id);
+      if (!site) {
+        res.status(404).json({ success: false, error: 'Site não encontrado.' });
+        return;
+      }
+      if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+        res.status(403).json({ success: false, error: 'Sem permissão para este site.' });
+        return;
+      }
+
+      // Buscar artigos capturados disponíveis
+      const allowedSources = site.sourceIds && site.sourceIds.length > 0 ? site.sourceIds : null;
+      const articles = dbRepo.getCapturedArticles({ limit: 1000 });
+
+      if (!articles || articles.length === 0) {
+        res.status(400).json({
+          success: false,
+          error: 'Nenhum artigo capturado disponível no sistema. Vá até a aba "Portais & Scraping" e clique em "Minerar Agora" em uma das fontes antes de testar.',
+        });
+        return;
+      }
+
+      // Procurar o artigo mais recente das fontes vinculadas que ainda não foi postado neste site
+      let candidate = articles.find((art) => {
+        const matchesSource = !allowedSources || allowedSources.includes(art.sourceId);
+        const alreadyPosted =
+          dbRepo.isArticlePublishedToSite(art.id, site.id) ||
+          (art.publishedSiteIds && art.publishedSiteIds.includes(site.id)) ||
+          art.wpSiteId === site.id;
+        return matchesSource && !alreadyPosted;
+      });
+
+      // Se todos já tiverem sido publicados, pega o mais recente das fontes vinculadas
+      if (!candidate) {
+        candidate = articles.find((art) => !allowedSources || allowedSources.includes(art.sourceId));
+      }
+
+      // Se ainda não achou (ex: fontes vinculadas não têm artigos), pega o mais recente global
+      if (!candidate) {
+        candidate = articles[0];
+      }
+
+      console.log(`[Test Post] Iniciando teste de publicação para o site "${site.siteName}" (${site.siteUrl}) usando a matéria "${candidate.originalTitle.slice(0, 45)}..."`);
+
+      // Reescrita de IA personalizada para este site (utiliza as instruções, tom editorial e provedor ativo)
+      const rewrittenArticle = await rewriteArticleWithAi(candidate.id, {
+        targetSiteId: site.id,
+        tone: (site.aiTone as any) || undefined,
+      });
+
+      // Sincroniza e publica no WordPress via plugin
+      const syncResult = await syncArticleToWordPress(rewrittenArticle.id, site.id, {
+        force: true, // Força a publicação no teste mesmo se já existia registro
+        status: site.defaultStatus || 'publish',
+        category: site.defaultCategory || 'Geral',
+      });
+
+      if (!syncResult.success) {
+        res.status(500).json({
+          success: false,
+          error: syncResult.message || 'Falha ao sincronizar o artigo com o WordPress.',
+        });
+        return;
+      }
+
+      // Atualiza data da última publicação no site
+      dbRepo.updateWordPressSite(site.id, { lastPublishedAt: new Date().toISOString() });
+
+      // Registra no histórico do WordPress
+      dbRepo.appendWordPressLog({
+        siteId: site.id,
+        siteName: site.siteName,
+        action: 'TEST_PUBLISH_SUCCESS',
+        status: 'success',
+        message: `[Teste Imediato] Artigo "${rewrittenArticle.aiTitle || rewrittenArticle.originalTitle}" publicado com sucesso! (WP Post ID: ${syncResult.wpPostId || 'N/A'})`,
+      });
+
+      res.json({
+        success: true,
+        message: 'Artigo de teste criado e publicado no WordPress com sucesso!',
+        title: rewrittenArticle.aiTitle || rewrittenArticle.originalTitle,
+        originalTitle: candidate.originalTitle,
+        sourceName: candidate.sourceName,
+        wpPostId: syncResult.wpPostId,
+        permalink: syncResult.permalink,
+        imageUrl: rewrittenArticle.imageUrl,
+        siteName: site.siteName,
+      });
+    } catch (err: any) {
+      console.error('[Test Post Error]', err);
+      res.status(500).json({ success: false, error: err.message || 'Erro inesperado ao gerar e publicar artigo de teste.' });
+    }
+  });
+
   // WordPress Activity Logs
   app.get('/api/wordpress/logs', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const siteId = req.query.siteId as string | undefined;
@@ -1291,7 +1388,7 @@ async function startServer() {
     const sourceId = req.query.sourceId as string | undefined;
     const status = req.query.status as string | undefined;
     const search = req.query.search as string | undefined;
-    const limit = Number(req.query.limit) || 100;
+    const limit = req.query.limit !== undefined ? Math.min(Number(req.query.limit) || 1000, 5000) : 1000;
 
     const articles = dbRepo.getCapturedArticles({ sourceId, status, search, limit });
     res.json(articles);
@@ -1528,7 +1625,7 @@ async function startServer() {
 
           if (now - lastPubTime >= siteFreqMs) {
             const allowedSources = site.sourceIds && site.sourceIds.length > 0 ? site.sourceIds : null;
-            const articles = dbRepo.getCapturedArticles({ limit: 100 });
+            const articles = dbRepo.getCapturedArticles({ limit: 500 });
 
             // Encontrar o artigo mais recente elegível que ainda não foi postado neste site (Escudo Anti-Duplicação)
             const candidate = articles.find((art) => {
