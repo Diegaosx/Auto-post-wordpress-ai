@@ -24,6 +24,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Shield,
+  CheckSquare,
+  Square,
+  Loader2,
+  Globe,
 } from 'lucide-react';
 
 interface ScraperViewProps {
@@ -57,6 +61,19 @@ export function ScraperView({ token }: ScraperViewProps) {
   const [previewArticle, setPreviewArticle] = useState<CapturedArticle | null>(null);
   const [publishModalArticle, setPublishModalArticle] = useState<CapturedArticle | null>(null);
   const [selectedPublishSiteId, setSelectedPublishSiteId] = useState<string>('');
+  const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([]);
+  const [siteSearchQuery, setSiteSearchQuery] = useState('');
+  const [forceRePublish, setForceRePublish] = useState(false);
+  const [isDispatching, setIsDispatching] = useState(false);
+  const [dispatchResults, setDispatchResults] = useState<Array<{
+    siteId: string;
+    siteName: string;
+    success: boolean;
+    wpPostId?: number;
+    permalink?: string;
+    message?: string;
+    error?: string;
+  }> | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Add Source Form
@@ -240,6 +257,68 @@ export function ScraperView({ token }: ScraperViewProps) {
       setActionMessage({ type: 'error', text: err.message });
     } finally {
       setPublishingArticleId(null);
+    }
+  };
+
+  const handleOpenRewriteModal = (art: CapturedArticle) => {
+    setPublishModalArticle(art);
+    setDispatchResults(null);
+    setSiteSearchQuery('');
+    setForceRePublish(false);
+    if (sites.length === 1) {
+      setSelectedSiteIds([sites[0].id]);
+    } else if (art.wpSiteId && sites.some((s) => s.id === art.wpSiteId)) {
+      setSelectedSiteIds([art.wpSiteId]);
+    } else {
+      setSelectedSiteIds(sites.map((s) => s.id));
+    }
+  };
+
+  const handleToggleSiteSelection = (siteId: string) => {
+    setSelectedSiteIds((prev) =>
+      prev.includes(siteId) ? prev.filter((id) => id !== siteId) : [...prev, siteId]
+    );
+  };
+
+  const handleSelectAllSites = (list: WordPressSite[]) => {
+    setSelectedSiteIds(list.map((s) => s.id));
+  };
+
+  const handleDeselectAllSites = () => {
+    setSelectedSiteIds([]);
+  };
+
+  const handleDispatchRewriteAndPublish = async () => {
+    if (!publishModalArticle || selectedSiteIds.length === 0) return;
+    setIsDispatching(true);
+    setDispatchResults(null);
+    try {
+      const res = await fetch(`/api/scraper/articles/${publishModalArticle.id}/rewrite-and-publish-to-sites`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          siteIds: selectedSiteIds,
+          force: forceRePublish,
+        }),
+      });
+      const data = await res.json();
+      if (data.results) {
+        setDispatchResults(data.results);
+        fetchData();
+      } else if (data.error) {
+        setDispatchResults([
+          { siteId: 'error', siteName: 'Sistema', success: false, error: data.error },
+        ]);
+      }
+    } catch (err: any) {
+      setDispatchResults([
+        { siteId: 'error', siteName: 'Erro de Conexão', success: false, error: err.message || 'Falha na requisição' },
+      ]);
+    } finally {
+      setIsDispatching(false);
     }
   };
 
@@ -438,6 +517,12 @@ export function ScraperView({ token }: ScraperViewProps) {
     setPageSize(val);
     setCurrentPage(1);
   };
+
+  const filteredModalSites = sites.filter((site) => {
+    if (!siteSearchQuery.trim()) return true;
+    const q = siteSearchQuery.toLowerCase().trim();
+    return site.siteName.toLowerCase().includes(q) || site.siteUrl.toLowerCase().includes(q);
+  });
 
   return (
     <div className="space-y-6">
@@ -822,10 +907,19 @@ export function ScraperView({ token }: ScraperViewProps) {
 
                 {/* Actions Button Group */}
                 <div className="flex flex-row md:flex-col items-center md:items-end gap-2 shrink-0 w-full md:w-auto justify-end border-t md:border-t-0 pt-2 md:pt-0">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    <button
+                      onClick={() => handleOpenRewriteModal(art)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-lg shadow-xs hover:shadow transition-all cursor-pointer shrink-0"
+                      title="Reescrever matéria com IA aplicando diretrizes editoriais e publicar em portais selecionados"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Reescrever & Publicar</span>
+                    </button>
+
                     <button
                       onClick={() => setPreviewArticle(art)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer shrink-0"
                       title="Visualizar Conteúdo da Matéria"
                     >
                       <Eye className="w-3.5 h-3.5 text-slate-500" />
@@ -1201,79 +1295,313 @@ export function ScraperView({ token }: ScraperViewProps) {
         </div>
       )}
 
-      {/* Modal: Publicar no WordPress */}
+      {/* Modal: Reescrever com IA & Publicar em Múltiplos Sites */}
       {publishModalArticle && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-900">Publicar Matéria no WordPress</h3>
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[92vh] shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-slate-50 via-white to-indigo-50/40">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-200 shrink-0">
+                  <Sparkles className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Reescrever Matéria com IA & Publicar
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Selecione os portais de destino. A IA reescreverá o artigo aplicando as regras e diretrizes de cada portal.
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setPublishModalArticle(null)}
-                className="text-slate-400 hover:text-slate-600 font-bold"
+                onClick={() => {
+                  if (!isDispatching) {
+                    setPublishModalArticle(null);
+                    setDispatchResults(null);
+                  }
+                }}
+                disabled={isDispatching}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-40"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
-              <div>
-                <span className="text-xs text-slate-500">Título que será enviado:</span>
-                <p className="font-bold text-sm text-slate-900 mt-1">
-                  {publishModalArticle.aiTitle || publishModalArticle.originalTitle}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Selecione o Site WordPress
-                </label>
-                <select
-                  value={selectedPublishSiteId}
-                  onChange={(e) => setSelectedPublishSiteId(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white"
-                >
-                  {sites.map((site) => {
-                    const isAlready = publishModalArticle.publishedSiteIds?.includes(site.id) || publishModalArticle.wpSiteId === site.id;
-                    return (
-                      <option key={site.id} value={site.id}>
-                        {site.siteName} ({site.siteUrl}) {isAlready ? '— [Já publicado]' : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-
-                {(publishModalArticle.publishedSiteIds?.includes(selectedPublishSiteId) || publishModalArticle.wpSiteId === selectedPublishSiteId) && (
-                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>
-                      <strong>Escudo Anti-Duplicação:</strong> Esta matéria já foi publicada anteriormente neste site. O sistema e o plugin evitarão criar posts repetidos.
-                    </span>
-                  </div>
+            {/* Scrollable Content */}
+            <div className="p-6 overflow-y-auto space-y-4">
+              {/* Article Preview Card */}
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-600 mb-1">
+                  <span>FONTE ORIGINAL: {publishModalArticle.sourceName}</span>
+                  <span className="text-slate-400 font-normal">
+                    {formatCaptureDateTime(publishModalArticle.createdAt || publishModalArticle.publishedAt)}
+                  </span>
+                </div>
+                <h4 className="font-bold text-sm text-slate-900 leading-snug">
+                  {publishModalArticle.originalTitle}
+                </h4>
+                {publishModalArticle.originalExcerpt && (
+                  <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                    {publishModalArticle.originalExcerpt}
+                  </p>
                 )}
               </div>
 
-              <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-600 space-y-1">
-                <div>✓ Foto de destaque será baixada e anexada no WordPress</div>
-                <div>✓ Formatação HTML e intertítulos preservados</div>
-                <div>✓ Tags de SEO serão configuradas automaticamente</div>
+              {/* Informative Banner */}
+              <div className="p-3 bg-indigo-50/80 border border-indigo-100 rounded-xl text-xs text-indigo-900 flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="font-semibold text-indigo-950">Geração Autoral & Anti-Plágio:</strong>{' '}
+                  A matéria será completamente reescrita para cada portal escolhido, respeitando rigorosamente as{' '}
+                  <strong>Diretrizes Editoriais de IA</strong> e o <strong>Tom</strong> configurados para aquele site. Se a matéria não tiver foto ou for genérica, o Cluster Antigravity gerará uma fotografia fotorrealista inédita (Google Imagen 3) e anexará como destaque no WordPress.
+                </div>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setPublishModalArticle(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handlePublishToWordPress(publishModalArticle.id, selectedPublishSiteId)}
-                  disabled={publishingArticleId === publishModalArticle.id || !selectedPublishSiteId}
-                  className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow disabled:opacity-50 cursor-pointer"
-                >
-                  {publishingArticleId === publishModalArticle.id ? 'Publicando...' : 'Confirmar Publicação'}
-                </button>
+              {/* Real-time Dispatch Feedback if active */}
+              {isDispatching && (
+                <div className="p-5 bg-indigo-50/60 border border-indigo-200 rounded-xl flex flex-col items-center justify-center text-center space-y-2.5 animate-pulse">
+                  <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+                  <p className="font-bold text-sm text-indigo-950">
+                    Reescrevendo com IA e publicando em {selectedSiteIds.length} {selectedSiteIds.length === 1 ? 'portal' : 'portais'}...
+                  </p>
+                  <p className="text-xs text-indigo-700 max-w-md">
+                    Processando via Cluster Antigravity MCP (reescrita inédita + criação de imagem fotorrealista + upload de mídia no WordPress via REST API). Isso pode levar alguns instantes.
+                  </p>
+                </div>
+              )}
+
+              {/* Results Panel */}
+              {dispatchResults && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Resultado do Envio ({dispatchResults.length})
+                    </span>
+                  </div>
+                  {dispatchResults.map((res, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+                        res.success
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                          : 'bg-rose-50 border-rose-200 text-rose-900'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        {res.success ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        )}
+                        <div>
+                          <p className="font-bold text-slate-900">{res.siteName}</p>
+                          <p className="mt-0.5">{res.message || res.error || (res.success ? 'Publicado com sucesso!' : 'Falha ao processar')}</p>
+                        </div>
+                      </div>
+
+                      {res.permalink && (
+                        <a
+                          href={res.permalink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-lg shrink-0 transition-colors"
+                        >
+                          Ver no WP <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Site Search & Selection (hidden while dispatching) */}
+              {!isDispatching && !dispatchResults && (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-indigo-600" />
+                        Portais WordPress Conectados ({sites.length})
+                      </label>
+                      <div className="flex items-center gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectAllSites(filteredModalSites)}
+                          className="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                        >
+                          Selecionar Todos ({filteredModalSites.length})
+                        </button>
+                        <span className="text-slate-300">|</span>
+                        <button
+                          type="button"
+                          onClick={handleDeselectAllSites}
+                          className="text-slate-500 hover:text-slate-700 font-medium cursor-pointer"
+                        >
+                          Desmarcar Todos
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Search Bar */}
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        value={siteSearchQuery}
+                        onChange={(e) => setSiteSearchQuery(e.target.value)}
+                        placeholder="Buscar portal por nome ou URL..."
+                        className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-slate-50/50"
+                      />
+                    </div>
+                  </div>
+
+                  {/* List of Sites */}
+                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                    {filteredModalSites.length === 0 ? (
+                      <div className="p-6 text-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        Nenhum portal WordPress encontrado com o termo pesquisado.
+                      </div>
+                    ) : (
+                      filteredModalSites.map((site) => {
+                        const isSelected = selectedSiteIds.includes(site.id);
+                        const isAlreadyPublished =
+                          publishModalArticle.publishedSiteIds?.includes(site.id) ||
+                          publishModalArticle.wpSiteId === site.id;
+                        const hasDirectives = Boolean(site.aiCustomInstructions?.trim());
+
+                        return (
+                          <div
+                            key={site.id}
+                            onClick={() => handleToggleSiteSelection(site.id)}
+                            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-200 shadow-2xs'
+                                : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-2.5">
+                                <div className="mt-0.5 text-indigo-600 shrink-0">
+                                  {isSelected ? (
+                                    <CheckSquare className="w-4 h-4 text-indigo-600" />
+                                  ) : (
+                                    <Square className="w-4 h-4 text-slate-300" />
+                                  )}
+                                </div>
+
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-bold text-xs text-slate-900">{site.siteName}</span>
+                                    <span className="text-[11px] text-slate-400 truncate max-w-xs">{site.siteUrl}</span>
+                                    {isAlreadyPublished && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                        <Shield className="w-2.5 h-2.5 text-amber-600" /> Já publicado neste portal
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Directives & Tone Preview */}
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+                                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                                      Tom: {site.aiTone || 'Jornalístico (Neutro & Formal)'}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-medium border border-indigo-100">
+                                      {site.publishedArticlesCount ?? 0} matérias publicadas
+                                    </span>
+                                    {hasDirectives ? (
+                                      <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                                        <Sparkles className="w-3 h-3 text-emerald-500" /> Diretrizes ativas
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400">Diretrizes padrão</span>
+                                    )}
+                                  </div>
+
+                                  {hasDirectives && (
+                                    <div className="mt-1.5 p-2 bg-white/80 rounded-md border border-slate-100 text-[11px] text-slate-600 italic line-clamp-2">
+                                      "{site.aiCustomInstructions}"
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Anti-duplication Force Option */}
+                  <div className="pt-2 flex items-center justify-between border-t border-slate-100 text-xs">
+                    <label className="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
+                      <input
+                        type="checkbox"
+                        checked={forceRePublish}
+                        onChange={(e) => setForceRePublish(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>
+                        Forçar reenvio mesmo se o artigo já constar como publicado no portal
+                      </span>
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-medium">
+                {dispatchResults
+                  ? 'Processo de envio finalizado.'
+                  : `${selectedSiteIds.length} ${selectedSiteIds.length === 1 ? 'portal selecionado' : 'portais selecionados'}`}
+              </span>
+
+              <div className="flex items-center gap-2">
+                {dispatchResults ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPublishModalArticle(null);
+                      setDispatchResults(null);
+                    }}
+                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow cursor-pointer transition-colors"
+                  >
+                    Concluir & Fechar
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPublishModalArticle(null)}
+                      disabled={isDispatching}
+                      className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg cursor-pointer disabled:opacity-40"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDispatchRewriteAndPublish}
+                      disabled={isDispatching || selectedSiteIds.length === 0}
+                      className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-lg shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all"
+                    >
+                      {isDispatching ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Reescrevendo e Enviando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>
+                            Reescrever com IA & Publicar ({selectedSiteIds.length})
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1390,6 +1718,20 @@ export function ScraperView({ token }: ScraperViewProps) {
               </button>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const art = previewArticle;
+                    setPreviewArticle(null);
+                    handleOpenRewriteModal(art);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-lg shadow-sm cursor-pointer transition-all"
+                  title="Reescrever matéria com IA seguindo as diretrizes e publicar em sites específicos"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  Reescrever & Publicar
+                </button>
+
                 <a
                   href={previewArticle.originalUrl}
                   target="_blank"

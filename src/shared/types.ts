@@ -143,6 +143,7 @@ export interface WordPressSite {
   aiModel?: string;
   aiTone?: string;
   lastPublishedAt?: string | null;
+  publishedArticlesCount?: number;
   createdAt: string;
   updatedAt: string;
 }

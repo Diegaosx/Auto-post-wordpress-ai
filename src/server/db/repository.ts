@@ -769,15 +769,43 @@ class PostgresRepository {
   // ==========================================================================
   // WORDPRESS SITES & LICENSES
   // ==========================================================================
+  public getPublishedArticleCountForSite(siteId: string): number {
+    const artIds = new Set<string>();
+    if (this.articlePublications) {
+      for (const [key] of this.articlePublications.entries()) {
+        const [artId, sId] = key.split(':');
+        if (sId === siteId) {
+          artIds.add(artId);
+        }
+      }
+    }
+    if (this.state.capturedArticles) {
+      for (const art of this.state.capturedArticles) {
+        if (art.wpSiteId === siteId || (art.publishedSiteIds && art.publishedSiteIds.includes(siteId))) {
+          artIds.add(art.id);
+        }
+      }
+    }
+    return artIds.size;
+  }
+
   public getWordPressSites(userId?: string): WordPressSite[] {
     if (!this.state.wpSites) this.state.wpSites = [];
-    if (!userId) return [...this.state.wpSites];
-    return this.state.wpSites.filter((s) => s.userId === userId);
+    const list = !userId ? this.state.wpSites : this.state.wpSites.filter((s) => s.userId === userId);
+    return list.map((s) => ({
+      ...s,
+      publishedArticlesCount: this.getPublishedArticleCountForSite(s.id),
+    }));
   }
 
   public getWordPressSiteById(id: string): WordPressSite | null {
     if (!this.state.wpSites) this.state.wpSites = [];
-    return this.state.wpSites.find((s) => s.id === id) || null;
+    const site = this.state.wpSites.find((s) => s.id === id);
+    if (!site) return null;
+    return {
+      ...site,
+      publishedArticlesCount: this.getPublishedArticleCountForSite(site.id),
+    };
   }
 
   public getWordPressSiteByApiKey(apiKey: string): WordPressSite | null {

@@ -1002,8 +1002,16 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                       </div>
                     </div>
 
-                    {/* Status Badge */}
-                    <div>
+                    {/* Status & Articles Badges */}
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-xs"
+                        title="Total de artigos gerados e publicados para este portal WordPress"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                        {site.publishedArticlesCount ?? 0} {site.publishedArticlesCount === 1 ? 'artigo gerado' : 'artigos gerados'}
+                      </span>
+
                       {site.status === 'connected' && (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1060,11 +1068,11 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                   </div>
 
                   {/* Config Chips / Badges */}
-                  <div className="mt-4 grid grid-cols-2 gap-2.5 text-xs">
+                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
                     <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
                       <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Fontes Vinculadas</span>
-                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
-                        <Radio className="w-3.5 h-3.5 text-indigo-500" />
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5 truncate">
+                        <Radio className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                         {hasSources ? `${site.sourceIds!.length} selecionadas` : 'Todas as fontes'}
                       </span>
                     </div>
@@ -1072,23 +1080,31 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                     <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
                       <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Frequência</span>
                       <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
-                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                        <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
                         {site.publishFrequencyMinutes ? `A cada ${site.publishFrequencyMinutes}min` : 'A cada 60min'}
                       </span>
                     </div>
 
                     <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
                       <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Status ao Postar</span>
-                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5 uppercase">
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5 uppercase truncate">
                         {site.defaultStatus} {site.autoPublish ? '(Auto)' : '(Manual)'}
                       </span>
                     </div>
 
                     <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100">
                       <span className="text-slate-400 block text-[10px] font-semibold uppercase tracking-wider">Diretrizes de IA</span>
-                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="font-semibold text-slate-800 flex items-center gap-1 mt-0.5 truncate">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                         {hasAiInstructions ? 'Instruções ativas' : 'Padrão editorial'}
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 bg-indigo-50/70 rounded-lg border border-indigo-100 col-span-2 sm:col-span-1">
+                      <span className="text-indigo-600 block text-[10px] font-semibold uppercase tracking-wider">Artigos Gerados</span>
+                      <span className="font-bold text-indigo-950 flex items-center gap-1.5 mt-0.5">
+                        <FileText className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        {site.publishedArticlesCount ?? 0} {site.publishedArticlesCount === 1 ? 'matéria enviada' : 'matérias enviadas'}
                       </span>
                     </div>
                   </div>

@@ -1435,6 +1435,107 @@ async function startServer() {
     }
   });
 
+  // Reescrever com Diretrizes e Publicar em Múltiplos Sites Selecionados
+  app.post(
+    '/api/scraper/articles/:id/rewrite-and-publish-to-sites',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      const articleId = req.params.id;
+      const { siteIds, force } = req.body || {};
+
+      if (!Array.isArray(siteIds) || siteIds.length === 0) {
+        res.status(400).json({ success: false, error: 'Selecione ao menos um site WordPress de destino.' });
+        return;
+      }
+
+      const article = dbRepo.getCapturedArticleById(articleId);
+      if (!article) {
+        res.status(404).json({ success: false, error: 'Artigo não encontrado no sistema.' });
+        return;
+      }
+
+      const results: Array<{
+        siteId: string;
+        siteName: string;
+        success: boolean;
+        wpPostId?: number;
+        permalink?: string;
+        message?: string;
+        error?: string;
+      }> = [];
+
+      for (const siteId of siteIds) {
+        const site = dbRepo.getWordPressSiteById(siteId);
+        if (!site) {
+          results.push({ siteId, siteName: 'Desconhecido', success: false, error: 'Site não encontrado.' });
+          continue;
+        }
+
+        try {
+          console.log(
+            `[Manual Re-write & Publish] Reescrevendo artigo "${article.originalTitle.slice(0, 40)}" para o portal "${site.siteName}" (${site.siteUrl})...`
+          );
+
+          // 1. Reescrita especializada aplicando com prioridade máxima as diretrizes exclusivas do portal
+          const rewrittenArticle = await rewriteArticleWithAi(articleId, {
+            targetSiteId: site.id,
+            tone: (site.aiTone as any) || undefined,
+          });
+
+          // 2. Publicação no WordPress via REST API do plugin
+          const syncResult = await syncArticleToWordPress(rewrittenArticle.id, site.id, {
+            force: force !== undefined ? Boolean(force) : true,
+            status: site.defaultStatus || 'publish',
+            category: site.defaultCategory || 'Geral',
+          });
+
+          if (syncResult.success) {
+            dbRepo.updateWordPressSite(site.id, { lastPublishedAt: new Date().toISOString() });
+            dbRepo.appendWordPressLog({
+              siteId: site.id,
+              siteName: site.siteName,
+              action: 'MANUAL_PUBLISH_SUCCESS',
+              status: 'success',
+              message: `Artigo "${rewrittenArticle.aiTitle || rewrittenArticle.originalTitle}" reescrito com diretrizes de "${site.siteName}" e publicado com sucesso! (ID WP: ${syncResult.wpPostId || 'N/A'})`,
+              details: { wpPostId: syncResult.wpPostId, permalink: syncResult.permalink, articleId: article.id },
+            });
+
+            results.push({
+              siteId: site.id,
+              siteName: site.siteName,
+              success: true,
+              wpPostId: syncResult.wpPostId,
+              permalink: syncResult.permalink,
+              message: `Publicado com sucesso no portal "${site.siteName}"! (ID WP: ${syncResult.wpPostId || ''})`,
+            });
+          } else {
+            results.push({
+              siteId: site.id,
+              siteName: site.siteName,
+              success: false,
+              error: syncResult.message || 'Falha ao sincronizar com WordPress.',
+            });
+          }
+        } catch (err: any) {
+          console.error(`[Manual Re-write & Publish Error] Erro ao enviar para "${site.siteName}":`, err.message);
+          results.push({
+            siteId: site.id,
+            siteName: site.siteName,
+            success: false,
+            error: err.message || 'Erro inesperado durante a reescrita ou publicação.',
+          });
+        }
+      }
+
+      const overallSuccess = results.some((r) => r.success);
+      res.json({
+        success: overallSuccess,
+        results,
+        article: dbRepo.getCapturedArticleById(articleId),
+      });
+    }
+  );
+
   // Delete Captured Article
   app.delete('/api/scraper/articles/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     const deleted = dbRepo.deleteCapturedArticle(req.params.id);
