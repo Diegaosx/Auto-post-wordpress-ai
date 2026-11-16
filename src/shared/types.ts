@@ -177,6 +177,7 @@ export interface NewsSource {
 }
 
 export interface ArticleMediaData {
+  wpFeaturedMediaId?: number;
   featuredImage?: {
     url: string;
     alt?: string;

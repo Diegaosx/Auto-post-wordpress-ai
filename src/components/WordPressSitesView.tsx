@@ -35,6 +35,7 @@ import {
   Eye,
   Code,
   Image as ImageIcon,
+  Wand2,
 } from 'lucide-react';
 
 interface WordPressSitesViewProps {
@@ -48,6 +49,8 @@ interface GeneratedArticleItem {
   site_url: string;
   wp_post_id?: number | null;
   wp_permalink?: string | null;
+  wp_featured_media_id?: number | null;
+  wp_has_featured_image?: boolean;
   published_at: string;
   title: string;
   description: string;
@@ -150,6 +153,8 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
   const [copiedJson, setCopiedJson] = useState(false);
   const [isSyncingSiteR2, setIsSyncingSiteR2] = useState(false);
   const [syncR2Feedback, setSyncR2Feedback] = useState<string | null>(null);
+  const [isRepairingAllImages, setIsRepairingAllImages] = useState(false);
+  const [repairingArticleId, setRepairingArticleId] = useState<string | null>(null);
 
   const handleOpenGeneratedArticles = async (site: WordPressSite) => {
     setViewingArticlesSite(site);
@@ -202,6 +207,63 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
       setSyncR2Feedback(`Erro: ${err.message || 'Falha de conexão com R2'}`);
     } finally {
       setIsSyncingSiteR2(false);
+    }
+  };
+
+  const handleRepairAllMissingImages = async () => {
+    if (!viewingArticlesSite) return;
+    setIsRepairingAllImages(true);
+    setSyncR2Feedback(null);
+    try {
+      const res = await fetch(`/api/wordpress/sites/${viewingArticlesSite.id}/repair-all-missing-images`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncR2Feedback(data.message || `Revisão concluída! ${data.repaired} matérias corrigidas no WordPress.`);
+        const reloadRes = await fetch(`/api/wordpress/sites/${viewingArticlesSite.id}/generated-articles`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const reloadData = await reloadRes.json();
+        if (reloadData.success) {
+          setSiteGeneratedArticles(reloadData.articles || []);
+        }
+      } else {
+        setSyncR2Feedback(`Erro: ${data.error || 'Falha ao reparar imagens.'}`);
+      }
+    } catch (err: any) {
+      setSyncR2Feedback(`Erro: ${err.message || 'Falha na requisição de reparo.'}`);
+    } finally {
+      setIsRepairingAllImages(false);
+    }
+  };
+
+  const handleRepairSingleArticleImage = async (articleId: string) => {
+    if (!viewingArticlesSite) return;
+    setRepairingArticleId(articleId);
+    try {
+      const res = await fetch(`/api/wordpress/sites/${viewingArticlesSite.id}/repair-article-image/${articleId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncR2Feedback(data.message || 'Imagem corrigida e vinculada com sucesso no WordPress!');
+        const reloadRes = await fetch(`/api/wordpress/sites/${viewingArticlesSite.id}/generated-articles`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const reloadData = await reloadRes.json();
+        if (reloadData.success) {
+          setSiteGeneratedArticles(reloadData.articles || []);
+        }
+      } else {
+        setSyncR2Feedback(`Erro: ${data.error || 'Falha ao vincular imagem.'}`);
+      }
+    } catch (err: any) {
+      setSyncR2Feedback(`Erro: ${err.message || 'Falha na requisição.'}`);
+    } finally {
+      setRepairingArticleId(null);
     }
   };
 
@@ -1668,6 +1730,17 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
                 <button
                   type="button"
+                  onClick={handleRepairAllMissingImages}
+                  disabled={isRepairingAllImages}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
+                  title="Revisar se todos os artigos possuem imagem em destaque no WordPress e reparar os faltantes"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${isRepairingAllImages ? 'animate-spin' : ''}`} />
+                  <span>{isRepairingAllImages ? 'Revisando Fotos...' : 'Revisar & Corrigir Fotos WP'}</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={handleSyncSiteR2}
                   disabled={isSyncingSiteR2}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors cursor-pointer"
@@ -1814,6 +1887,15 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                                   ID WP: #{art.wp_post_id}
                                 </span>
                               )}
+                              {art.wp_featured_media_id ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" title={`Mídia Anexada ID #${art.wp_featured_media_id}`}>
+                                  ✓ Foto WP #{art.wp_featured_media_id}
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200" title="Artigo publicado sem imagem em destaque associada no WordPress">
+                                  ⚠ Sem Foto no WP
+                                </span>
+                              )}
                               <span>•</span>
                               <span>{new Date(art.published_at).toLocaleString('pt-BR')}</span>
                               {art.seo?.focus_keyword && (
@@ -1859,6 +1941,19 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
                         {/* Actions */}
                         <div className="flex items-center gap-2 shrink-0 justify-end border-t md:border-t-0 pt-2 md:pt-0">
+                          {!art.wp_featured_media_id && (
+                            <button
+                              type="button"
+                              onClick={() => handleRepairSingleArticleImage(art.id)}
+                              disabled={repairingArticleId === art.id}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                              title="Corrigir e vincular imagem em destaque no WordPress agora"
+                            >
+                              <Wand2 className={`w-3.5 h-3.5 ${repairingArticleId === art.id ? 'animate-spin' : ''}`} />
+                              <span>{repairingArticleId === art.id ? 'Corrigindo...' : 'Corrigir Foto WP'}</span>
+                            </button>
+                          )}
+
                           <button
                             type="button"
                             onClick={() => {

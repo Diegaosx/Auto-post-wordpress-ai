@@ -36,7 +36,12 @@ import {
   uploadSiteArticleJson,
   uploadSiteArticlesFeedJson,
 } from './src/server/services/r2-sync';
-import { syncArticleToWordPress, testWordPressConnection } from './src/server/services/wordpress-sync';
+import {
+  syncArticleToWordPress,
+  testWordPressConnection,
+  verifyAndRepairPostFeaturedImage,
+  repairAllMissingImagesForSite,
+} from './src/server/services/wordpress-sync';
 import {
   UserRole,
   UserStatus,
@@ -1401,6 +1406,93 @@ async function startServer() {
       }
     }
   );
+
+  // Reparar Imagem em Destaque de um Artigo Específico no WordPress
+  app.post(
+    '/api/wordpress/sites/:id/repair-article-image/:articleId',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const site = dbRepo.getWordPressSiteById(req.params.id);
+        if (!site) {
+          res.status(404).json({ success: false, error: 'Portal WordPress não encontrado.' });
+          return;
+        }
+        if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+          res.status(403).json({ success: false, error: 'Acesso negado para este portal.' });
+          return;
+        }
+
+        const result = await verifyAndRepairPostFeaturedImage(site.id, req.params.articleId);
+        res.json(result);
+      } catch (err: any) {
+        console.error('[Repair Article Image Error]', err);
+        res.status(500).json({ success: false, error: err.message || 'Erro ao reparar imagem do artigo.' });
+      }
+    }
+  );
+
+  // Varredura e Reparo em Lote de Todas as Matérias Sem Foto no WordPress
+  app.post(
+    '/api/wordpress/sites/:id/repair-all-missing-images',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const site = dbRepo.getWordPressSiteById(req.params.id);
+        if (!site) {
+          res.status(404).json({ success: false, error: 'Portal WordPress não encontrado.' });
+          return;
+        }
+        if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+          res.status(403).json({ success: false, error: 'Acesso negado para este portal.' });
+          return;
+        }
+
+        const report = await repairAllMissingImagesForSite(site.id);
+        res.json({
+          success: true,
+          ...report,
+          message: `Varredura concluída: ${report.repaired} matérias corrigidas com imagem no WordPress!`,
+        });
+      } catch (err: any) {
+        console.error('[Repair Missing Images Error]', err);
+        res.status(500).json({ success: false, error: err.message || 'Erro ao varrer e reparar imagens.' });
+      }
+    }
+  );
+
+  // Proxy Aberto e Resiliente de Imagem (Bypass definitivo de bloqueios de CDN externa para o WordPress)
+  app.get('/api/media-proxy', async (req: Request, res: Response) => {
+    try {
+      const rawUrl = ((req.query.url as string) || '').trim();
+      if (!rawUrl || (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://'))) {
+        res.status(400).send('URL inválida');
+        return;
+      }
+
+      const imgRes = await fetch(rawUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!imgRes.ok) {
+        res.status(imgRes.status).send('Erro ao obter imagem de origem');
+        return;
+      }
+
+      const ct = imgRes.headers.get('content-type') || 'image/jpeg';
+      res.setHeader('Content-Type', ct);
+      res.setHeader('Cache-Control', 'public, max-age=604800, s-maxage=604800');
+      const buffer = Buffer.from(await imgRes.arrayBuffer());
+      res.send(buffer);
+    } catch (err: any) {
+      res.status(500).send(`Falha no proxy de mídia: ${err.message}`);
+    }
+  });
 
   // WordPress Activity Logs
   app.get('/api/wordpress/logs', requireAuth, (req: AuthenticatedRequest, res: Response) => {

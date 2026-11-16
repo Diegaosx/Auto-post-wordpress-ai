@@ -852,8 +852,18 @@ class AutoPostWordPressAI {
             'filename'    => $tmp,
         ));
 
-        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200 && file_exists($tmp) && filesize($tmp) > 0) {
-            $downloaded = true;
+        if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+            if (file_exists($tmp) && filesize($tmp) > 0) {
+                $downloaded = true;
+            } else {
+                $body_data = wp_remote_retrieve_body($response);
+                if (!empty($body_data)) {
+                    @file_put_contents($tmp, $body_data);
+                    if (file_exists($tmp) && filesize($tmp) > 0) {
+                        $downloaded = true;
+                    }
+                }
+            }
         }
 
         // 2. Se falhar, tentar cURL nativo com impersonação de navegador

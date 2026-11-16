@@ -261,6 +261,181 @@ export async function uploadFeedJson(articles: CapturedArticle[] = []): Promise<
 }
 
 /**
+ * Faz upload de um buffer binário de imagem para o Cloudflare R2
+ * Retorna a URL pública na CDN aberta sem bloqueios de firewall ou hotlinking
+ */
+export async function uploadImageBufferToR2(
+  imageBuffer: Buffer,
+  filenameKey: string,
+  contentType: string = 'image/jpeg'
+): Promise<string | null> {
+  const config = await getR2Config();
+  if (!config) return null;
+
+  const key = `midias/${filenameKey}`;
+  const publicUrl = `${config.publicUrl}/${key}`;
+  const client = createR2Client(config);
+
+  try {
+    const command = new PutObjectCommand({
+      Bucket: config.bucketName,
+      Key: key,
+      Body: imageBuffer,
+      ContentType: contentType,
+      CacheControl: 'public, max-age=31536000, immutable',
+    });
+    await client.send(command);
+    console.log(`[R2 Image Upload] Imagem salva com sucesso no R2: ${publicUrl}`);
+    return publicUrl;
+  } catch (err: any) {
+    console.error(`[R2 Image Upload Error] Falha ao enviar imagem ${key} para R2:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Garante que a imagem do artigo esteja espelhada e acessível no Cloudflare R2
+ * Permite que qualquer WordPress faça download_url sem bloqueios de CDN ou WAF externo
+ */
+export async function ensureImageMirroredToR2(
+  imageUrlOrBase64: string | undefined,
+  articleId: string,
+  slugTitle: string = 'destaque'
+): Promise<{ url: string; base64?: string } | null> {
+  if (!imageUrlOrBase64 || !imageUrlOrBase64.trim()) return null;
+
+  const config = await getR2Config();
+  const input = imageUrlOrBase64.trim();
+
+  // Se já for uma URL do nosso R2 / CDN
+  if (config && (input.startsWith(config.publicUrl) || input.includes('cdn.saletub.com'))) {
+    return { url: input };
+  }
+
+  try {
+    let buffer: Buffer | null = null;
+    let contentType = 'image/jpeg';
+    let ext = 'jpg';
+
+    if (input.startsWith('data:image/')) {
+      const match = input.match(/^data:(image\/(\w+));base64,(.+)$/s);
+      if (match) {
+        contentType = match[1];
+        ext = match[2] === 'jpeg' ? 'jpg' : match[2];
+        buffer = Buffer.from(match[3], 'base64');
+      }
+    } else if (input.startsWith('http://') || input.startsWith('https://')) {
+      const res = await fetch(input, {
+        redirect: 'follow',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (res.ok) {
+        const arrayBuf = await res.arrayBuffer();
+        if (arrayBuf.byteLength >= 500 && arrayBuf.byteLength <= 15 * 1024 * 1024) {
+          buffer = Buffer.from(arrayBuf);
+          const headerCt = res.headers.get('content-type') || '';
+          if (headerCt.includes('png')) {
+            contentType = 'image/png';
+            ext = 'png';
+          } else if (headerCt.includes('webp')) {
+            contentType = 'image/webp';
+            ext = 'webp';
+          } else {
+            contentType = 'image/jpeg';
+            ext = 'jpg';
+          }
+        }
+      }
+    }
+
+    if (buffer && buffer.length >= 500) {
+      const cleanSlug = slugTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) || 'foto';
+      const filenameKey = `${articleId}-${cleanSlug}.${ext}`;
+
+      if (config) {
+        const r2Url = await uploadImageBufferToR2(buffer, filenameKey, contentType);
+        if (r2Url) {
+          return {
+            url: r2Url,
+            base64: `data:${contentType};base64,${buffer.toString('base64')}`,
+          };
+        }
+      }
+
+      // Fallback: se R2 não configurado localmente, retorna base64
+      return {
+        url: input,
+        base64: `data:${contentType};base64,${buffer.toString('base64')}`,
+      };
+    }
+  } catch (err: any) {
+    console.warn(`[R2 Mirror] Falha ao espelhar imagem no R2 (${input.slice(0, 80)}):`, err.message);
+  }
+
+  return null;
+}
+
+/**
+ * Gera uma imagem editorial de fallback profissional via Pollinations / IA
+ * caso o artigo original não possua imagem ou ela tenha falhado
+ */
+export async function generateContextualEditorialImage(
+  title: string,
+  articleId: string
+): Promise<{ url: string; base64?: string } | null> {
+  try {
+    const cleanPrompt = title
+      .replace(/[^\w\s\u00C0-\u00FF]/gi, ' ')
+      .trim()
+      .slice(0, 120);
+
+    const pollinationUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt + ' realistic editorial journalism photography news 8k')}?width=1200&height=675&nologo=true`;
+
+    const res = await fetch(pollinationUrl, {
+      signal: AbortSignal.timeout(20000),
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+      },
+    });
+
+    if (res.ok) {
+      const arrayBuf = await res.arrayBuffer();
+      if (arrayBuf.byteLength >= 5000) {
+        const buffer = Buffer.from(arrayBuf);
+        const config = await getR2Config();
+        const filenameKey = `${articleId}-ia-gerada.jpg`;
+
+        if (config) {
+          const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
+          if (r2Url) {
+            return {
+              url: r2Url,
+              base64: `data:image/jpeg;base64,${buffer.toString('base64')}`,
+            };
+          }
+        }
+
+        return {
+          url: pollinationUrl,
+          base64: `data:image/jpeg;base64,${buffer.toString('base64')}`,
+        };
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Fallback Image Generator] Falha ao gerar imagem editorial via IA:', err.message);
+  }
+
+  return null;
+}
+
+/**
  * Valida a conexão com o bucket Cloudflare R2
  */
 export async function testR2Connection(customConfig?: Partial<R2Config>): Promise<{
@@ -325,6 +500,8 @@ export interface GeneratedArticleStructure {
   site_url: string;
   wp_post_id?: number | null;
   wp_permalink?: string | null;
+  wp_featured_media_id?: number | null;
+  wp_has_featured_image?: boolean;
   published_at: string;
   title: string;
   description: string;
@@ -374,7 +551,7 @@ export interface GeneratedArticleStructure {
 export function buildGeneratedArticleStructure(
   site: WordPressSite,
   article: CapturedArticle,
-  publicationMeta?: { wpPostId?: number; permalink?: string; publishedAt?: string },
+  publicationMeta?: { wpPostId?: number; permalink?: string; publishedAt?: string; wpFeaturedMediaId?: number | null },
   r2PublicUrlBase?: string
 ): GeneratedArticleStructure {
   const title = (article.aiTitle || article.originalTitle || '').trim();
@@ -395,6 +572,12 @@ export function buildGeneratedArticleStructure(
   const publishedAt =
     publicationMeta?.publishedAt || article.publishedAt || article.createdAt || new Date().toISOString();
 
+  const wpFeaturedMediaId =
+    publicationMeta?.wpFeaturedMediaId !== undefined
+      ? publicationMeta.wpFeaturedMediaId
+      : ((article.mediaData as any)?.wpFeaturedMediaId || null);
+  const wpHasFeaturedImage = Boolean(wpFeaturedMediaId && wpFeaturedMediaId > 0) || Boolean(imgUrl);
+
   const r2JsonUrl = r2PublicUrlBase
     ? `${r2PublicUrlBase.replace(/\/$/, '')}/sites/${site.id}/artigos/${article.id}.json`
     : (article.r2JsonUrl || undefined);
@@ -412,6 +595,8 @@ export function buildGeneratedArticleStructure(
     site_url: site.siteUrl,
     wp_post_id: wpPostId,
     wp_permalink: wpPermalink,
+    wp_featured_media_id: wpFeaturedMediaId,
+    wp_has_featured_image: wpHasFeaturedImage,
     published_at: publishedAt,
     title,
     description: excerpt,
@@ -467,7 +652,7 @@ export function buildGeneratedArticleStructure(
 export async function uploadSiteArticleJson(
   site: WordPressSite,
   article: CapturedArticle,
-  publicationMeta?: { wpPostId?: number; permalink?: string; publishedAt?: string }
+  publicationMeta?: { wpPostId?: number; permalink?: string; publishedAt?: string; wpFeaturedMediaId?: number | null }
 ): Promise<string | null> {
   const config = await getR2Config();
   if (!config) return null;
@@ -501,7 +686,7 @@ export async function uploadSiteArticleJson(
  */
 export async function uploadSiteArticlesFeedJson(
   site: WordPressSite,
-  items: Array<{ article: CapturedArticle; publication?: { wpPostId?: number; permalink?: string; publishedAt?: string } }>
+  items: Array<{ article: CapturedArticle; publication?: { wpPostId?: number; permalink?: string; publishedAt?: string; wpFeaturedMediaId?: number | null } }>
 ): Promise<string | null> {
   const config = await getR2Config();
   if (!config) return null;
