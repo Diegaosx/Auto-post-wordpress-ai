@@ -74,6 +74,8 @@ export function ScraperView({ token }: ScraperViewProps) {
     message?: string;
     error?: string;
   }> | null>(null);
+  const [dispatchStep, setDispatchStep] = useState<string>('');
+  const [dispatchProgress, setDispatchProgress] = useState<number>(0);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Add Source Form
@@ -211,7 +213,13 @@ export function ScraperView({ token }: ScraperViewProps) {
         },
         body: JSON.stringify({ tone: 'jornalistico', model: 'gemini' }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text || `HTTP ${res.status}: Erro na resposta do servidor`);
+      }
       if (data.success) {
         setActionMessage({ type: 'success', text: 'Artigo reescrito com sucesso pela IA!' });
         fetchData();
@@ -263,6 +271,8 @@ export function ScraperView({ token }: ScraperViewProps) {
   const handleOpenRewriteModal = (art: CapturedArticle) => {
     setPublishModalArticle(art);
     setDispatchResults(null);
+    setDispatchStep('');
+    setDispatchProgress(0);
     setSiteSearchQuery('');
     setForceRePublish(false);
     if (sites.length === 1) {
@@ -288,10 +298,62 @@ export function ScraperView({ token }: ScraperViewProps) {
     setSelectedSiteIds([]);
   };
 
+  const pollRewriteJob = async (jobId: string) => {
+    const maxAttempts = 180; // até 6 minutos (180 * 2s)
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      await new Promise((r) => setTimeout(r, 2000));
+      attempts++;
+
+      try {
+        const pollRes = await fetch(`/api/scraper/rewrite-jobs/${jobId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const pollText = await pollRes.text();
+        let pollData: any = {};
+        try {
+          pollData = JSON.parse(pollText);
+        } catch {
+          continue;
+        }
+
+        if (pollData.job) {
+          const job = pollData.job;
+          if (job.currentStep) setDispatchStep(job.currentStep);
+          if (job.progress !== undefined) setDispatchProgress(job.progress);
+
+          if (job.status === 'completed') {
+            setDispatchResults(job.results || []);
+            fetchData();
+            return;
+          }
+
+          if (job.status === 'failed') {
+            setDispatchResults(
+              job.results && job.results.length > 0
+                ? job.results
+                : [{ siteId: 'error', siteName: 'Erro de Processamento', success: false, error: job.error || 'Falha ao processar job.' }]
+            );
+            return;
+          }
+        }
+      } catch (pollErr: any) {
+        console.warn('[Poll Error]:', pollErr.message);
+      }
+    }
+
+    throw new Error('O tempo limite de espera foi excedido, mas o processo continua em execução no servidor. Verifique a lista em instantes.');
+  };
+
   const handleDispatchRewriteAndPublish = async () => {
     if (!publishModalArticle || selectedSiteIds.length === 0) return;
     setIsDispatching(true);
     setDispatchResults(null);
+    setDispatchStep('Iniciando processamento autônomo com IA...');
+    setDispatchProgress(10);
+
     try {
       const res = await fetch(`/api/scraper/articles/${publishModalArticle.id}/rewrite-and-publish-to-sites`, {
         method: 'POST',
@@ -304,8 +366,21 @@ export function ScraperView({ token }: ScraperViewProps) {
           force: forceRePublish,
         }),
       });
-      const data = await res.json();
-      if (data.results) {
+
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text || `HTTP ${res.status}: Erro retornado pelo servidor ou proxy intermediário.`);
+      }
+
+      // Se retornou jobId para acompanhamento assíncrono (sem timeout de proxy)
+      if (data.jobId) {
+        setDispatchStep('Aguardando reescrita autoral via Cluster Antigravity...');
+        setDispatchProgress(25);
+        await pollRewriteJob(data.jobId);
+      } else if (data.results) {
         setDispatchResults(data.results);
         fetchData();
       } else if (data.error) {
@@ -315,7 +390,7 @@ export function ScraperView({ token }: ScraperViewProps) {
       }
     } catch (err: any) {
       setDispatchResults([
-        { siteId: 'error', siteName: 'Erro de Conexão', success: false, error: err.message || 'Falha na requisição' },
+        { siteId: 'error', siteName: 'Falha no Envio', success: false, error: err.message || 'Falha na requisição' },
       ]);
     } finally {
       setIsDispatching(false);
@@ -1360,14 +1435,41 @@ export function ScraperView({ token }: ScraperViewProps) {
 
               {/* Real-time Dispatch Feedback if active */}
               {isDispatching && (
-                <div className="p-5 bg-indigo-50/60 border border-indigo-200 rounded-xl flex flex-col items-center justify-center text-center space-y-2.5 animate-pulse">
-                  <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
-                  <p className="font-bold text-sm text-indigo-950">
-                    Reescrevendo com IA e publicando em {selectedSiteIds.length} {selectedSiteIds.length === 1 ? 'portal' : 'portais'}...
-                  </p>
-                  <p className="text-xs text-indigo-700 max-w-md">
-                    Processando via Cluster Antigravity MCP (reescrita inédita + criação de imagem fotorrealista + upload de mídia no WordPress via REST API). Isso pode levar alguns instantes.
-                  </p>
+                <div className="p-5 bg-gradient-to-br from-indigo-50/90 to-purple-50/80 border border-indigo-200/80 rounded-2xl shadow-sm space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-600/10 flex items-center justify-center shrink-0">
+                        <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-sm text-indigo-950">
+                          Reescrevendo com IA e Publicando
+                        </p>
+                        <p className="text-xs text-indigo-700 font-medium mt-0.5">
+                          {dispatchStep || `Processando em segundo plano (${selectedSiteIds.length} ${selectedSiteIds.length === 1 ? 'portal' : 'portais'})...`}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-indigo-700 bg-indigo-100/90 px-2.5 py-1 rounded-full border border-indigo-200/60">
+                      {Math.max(10, Math.min(100, dispatchProgress))}%
+                    </span>
+                  </div>
+
+                  {/* Barra de progresso */}
+                  <div className="w-full bg-indigo-100/70 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-indigo-600 h-2 rounded-full transition-all duration-500 ease-out shadow-sm"
+                      style={{ width: `${Math.max(10, Math.min(100, dispatchProgress))}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-indigo-600/80 pt-1 border-t border-indigo-100/80">
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                      Job assíncrono ativo (blindado contra timeouts do proxy)
+                    </span>
+                    <span className="font-medium text-slate-500">Cluster Antigravity MCP</span>
+                  </div>
                 </div>
               )}
 

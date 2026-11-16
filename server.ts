@@ -1638,7 +1638,41 @@ async function startServer() {
     }
   });
 
-  // Reescrever com Diretrizes e Publicar em Múltiplos Sites Selecionados
+  // Estrutura de Jobs em Segundo Plano para Reescrita e Publicação (Zero Timeout no Proxy)
+  interface RewritePublishJob {
+    id: string;
+    articleId: string;
+    siteIds: string[];
+    status: 'queued' | 'running' | 'completed' | 'failed';
+    progress: number;
+    currentStep: string;
+    startedAt: string;
+    completedAt?: string;
+    results: Array<{
+      siteId: string;
+      siteName: string;
+      success: boolean;
+      wpPostId?: number;
+      permalink?: string;
+      message?: string;
+      error?: string;
+    }>;
+    error?: string;
+  }
+
+  const rewriteJobs = new Map<string, RewritePublishJob>();
+
+  // Limpeza automática periódica de jobs antigos (> 2 horas)
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, job] of rewriteJobs.entries()) {
+      if (now - new Date(job.startedAt).getTime() > 2 * 60 * 60 * 1000) {
+        rewriteJobs.delete(id);
+      }
+    }
+  }, 15 * 60 * 1000);
+
+  // Reescrever com Diretrizes e Publicar em Múltiplos Sites Selecionados (com suporte a Job Assíncrono contra timeouts)
   app.post(
     '/api/scraper/articles/:id/rewrite-and-publish-to-sites',
     requireAuth,
@@ -1657,87 +1691,208 @@ async function startServer() {
         return;
       }
 
-      const results: Array<{
-        siteId: string;
-        siteName: string;
-        success: boolean;
-        wpPostId?: number;
-        permalink?: string;
-        message?: string;
-        error?: string;
-      }> = [];
+      // Se o cliente solicitou modo síncrono (ex: scripts ou testes locais)
+      if (req.query.sync === 'true') {
+        const results: Array<{
+          siteId: string;
+          siteName: string;
+          success: boolean;
+          wpPostId?: number;
+          permalink?: string;
+          message?: string;
+          error?: string;
+        }> = [];
 
-      for (const siteId of siteIds) {
-        const site = dbRepo.getWordPressSiteById(siteId);
-        if (!site) {
-          results.push({ siteId, siteName: 'Desconhecido', success: false, error: 'Site não encontrado.' });
-          continue;
-        }
+        for (const siteId of siteIds) {
+          const site = dbRepo.getWordPressSiteById(siteId);
+          if (!site) {
+            results.push({ siteId, siteName: 'Desconhecido', success: false, error: 'Site não encontrado.' });
+            continue;
+          }
 
-        try {
-          console.log(
-            `[Manual Re-write & Publish] Reescrevendo artigo "${article.originalTitle.slice(0, 40)}" para o portal "${site.siteName}" (${site.siteUrl})...`
-          );
+          try {
+            console.log(
+              `[Manual Re-write & Publish] Reescrevendo artigo "${article.originalTitle.slice(0, 40)}" para o portal "${site.siteName}" (${site.siteUrl})...`
+            );
 
-          // 1. Reescrita especializada aplicando com prioridade máxima as diretrizes exclusivas do portal
-          const rewrittenArticle = await rewriteArticleWithAi(articleId, {
-            targetSiteId: site.id,
-            tone: (site.aiTone as any) || undefined,
-          });
-
-          // 2. Publicação no WordPress via REST API do plugin
-          const syncResult = await syncArticleToWordPress(rewrittenArticle.id, site.id, {
-            force: force !== undefined ? Boolean(force) : true,
-            status: site.defaultStatus || 'publish',
-            category: site.defaultCategory || 'Geral',
-          });
-
-          if (syncResult.success) {
-            dbRepo.updateWordPressSite(site.id, { lastPublishedAt: new Date().toISOString() });
-            dbRepo.appendWordPressLog({
-              siteId: site.id,
-              siteName: site.siteName,
-              action: 'MANUAL_PUBLISH_SUCCESS',
-              status: 'success',
-              message: `Artigo "${rewrittenArticle.aiTitle || rewrittenArticle.originalTitle}" reescrito com diretrizes de "${site.siteName}" e publicado com sucesso! (ID WP: ${syncResult.wpPostId || 'N/A'})`,
-              details: { wpPostId: syncResult.wpPostId, permalink: syncResult.permalink, articleId: article.id },
+            const rewrittenArticle = await rewriteArticleWithAi(articleId, {
+              targetSiteId: site.id,
+              tone: (site.aiTone as any) || undefined,
             });
 
-            results.push({
-              siteId: site.id,
-              siteName: site.siteName,
-              success: true,
-              wpPostId: syncResult.wpPostId,
-              permalink: syncResult.permalink,
-              message: `Publicado com sucesso no portal "${site.siteName}"! (ID WP: ${syncResult.wpPostId || ''})`,
+            const syncResult = await syncArticleToWordPress(rewrittenArticle.id, site.id, {
+              force: force !== undefined ? Boolean(force) : true,
+              status: site.defaultStatus || 'publish',
+              category: site.defaultCategory || 'Geral',
             });
-          } else {
+
+            if (syncResult.success) {
+              dbRepo.updateWordPressSite(site.id, { lastPublishedAt: new Date().toISOString() });
+              dbRepo.appendWordPressLog({
+                siteId: site.id,
+                siteName: site.siteName,
+                action: 'MANUAL_PUBLISH_SUCCESS',
+                status: 'success',
+                message: `Artigo "${rewrittenArticle.aiTitle || rewrittenArticle.originalTitle}" reescrito com diretrizes de "${site.siteName}" e publicado com sucesso! (ID WP: ${syncResult.wpPostId || 'N/A'})`,
+                details: { wpPostId: syncResult.wpPostId, permalink: syncResult.permalink, articleId: article.id },
+              });
+
+              results.push({
+                siteId: site.id,
+                siteName: site.siteName,
+                success: true,
+                wpPostId: syncResult.wpPostId,
+                permalink: syncResult.permalink,
+                message: `Publicado com sucesso no portal "${site.siteName}"! (ID WP: ${syncResult.wpPostId || ''})`,
+              });
+            } else {
+              results.push({
+                siteId: site.id,
+                siteName: site.siteName,
+                success: false,
+                error: syncResult.message || 'Falha ao sincronizar com WordPress.',
+              });
+            }
+          } catch (err: any) {
+            console.error(`[Manual Re-write & Publish Error] Erro ao enviar para "${site.siteName}":`, err.message);
             results.push({
               siteId: site.id,
               siteName: site.siteName,
               success: false,
-              error: syncResult.message || 'Falha ao sincronizar com WordPress.',
+              error: err.message || 'Erro inesperado durante a reescrita ou publicação.',
             });
           }
-        } catch (err: any) {
-          console.error(`[Manual Re-write & Publish Error] Erro ao enviar para "${site.siteName}":`, err.message);
-          results.push({
-            siteId: site.id,
-            siteName: site.siteName,
-            success: false,
-            error: err.message || 'Erro inesperado durante a reescrita ou publicação.',
-          });
         }
+
+        const overallSuccess = results.some((r) => r.success);
+        res.json({
+          success: overallSuccess,
+          results,
+          article: dbRepo.getCapturedArticleById(articleId),
+        });
+        return;
       }
 
-      const overallSuccess = results.some((r) => r.success);
+      // Modo Padrão: Despacho de Job Assíncrono com resposta imediata em <50ms (Elimina 100% dos erros 504/upstream do Railway/Cloudflare)
+      const jobId = `rwjob_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const job: RewritePublishJob = {
+        id: jobId,
+        articleId,
+        siteIds,
+        status: 'queued',
+        progress: 10,
+        currentStep: 'Iniciando reescrita autoral via IA...',
+        startedAt: new Date().toISOString(),
+        results: [],
+      };
+      rewriteJobs.set(jobId, job);
+
+      // Resposta imediata para liberar a conexão HTTP
       res.json({
-        success: overallSuccess,
-        results,
-        article: dbRepo.getCapturedArticleById(articleId),
+        success: true,
+        jobId,
+        status: 'queued',
+        message: 'Tarefa de reescrita iniciada em segundo plano.',
+      });
+
+      // Executa o processamento em background
+      (async () => {
+        job.status = 'running';
+        const total = siteIds.length;
+        let count = 0;
+
+        for (const siteId of siteIds) {
+          const site = dbRepo.getWordPressSiteById(siteId);
+          if (!site) {
+            job.results.push({ siteId, siteName: 'Desconhecido', success: false, error: 'Site não encontrado.' });
+            continue;
+          }
+
+          try {
+            const baseProgress = Math.round((count / total) * 100);
+            job.progress = Math.min(95, baseProgress + 15);
+            job.currentStep = `Reescrevendo matéria para o portal "${site.siteName}" via Cluster Antigravity...`;
+
+            console.log(
+              `[Async Rewrite Job ${jobId}] Reescrevendo matéria "${article.originalTitle.slice(0, 35)}..." para "${site.siteName}"...`
+            );
+
+            // 1. Reescrita especializada com diretrizes do portal
+            const rewrittenArticle = await rewriteArticleWithAi(articleId, {
+              targetSiteId: site.id,
+              tone: (site.aiTone as any) || undefined,
+            });
+
+            job.progress = Math.min(95, baseProgress + 45);
+            job.currentStep = `Publicando matéria no WordPress do portal "${site.siteName}"...`;
+
+            // 2. Sincronização e publicação no WordPress via REST API do plugin
+            const syncResult = await syncArticleToWordPress(rewrittenArticle.id, site.id, {
+              force: force !== undefined ? Boolean(force) : true,
+              status: site.defaultStatus || 'publish',
+              category: site.defaultCategory || 'Geral',
+            });
+
+            if (syncResult.success) {
+              dbRepo.updateWordPressSite(site.id, { lastPublishedAt: new Date().toISOString() });
+              dbRepo.appendWordPressLog({
+                siteId: site.id,
+                siteName: site.siteName,
+                action: 'MANUAL_PUBLISH_SUCCESS',
+                status: 'success',
+                message: `Artigo "${rewrittenArticle.aiTitle || rewrittenArticle.originalTitle}" reescrito com diretrizes de "${site.siteName}" e publicado com sucesso! (ID WP: ${syncResult.wpPostId || 'N/A'})`,
+                details: { wpPostId: syncResult.wpPostId, permalink: syncResult.permalink, articleId: article.id },
+              });
+
+              job.results.push({
+                siteId: site.id,
+                siteName: site.siteName,
+                success: true,
+                wpPostId: syncResult.wpPostId,
+                permalink: syncResult.permalink,
+                message: `Publicado com sucesso no portal "${site.siteName}"! (ID WP: ${syncResult.wpPostId || ''})`,
+              });
+            } else {
+              job.results.push({
+                siteId: site.id,
+                siteName: site.siteName,
+                success: false,
+                error: syncResult.message || 'Falha ao sincronizar com WordPress.',
+              });
+            }
+          } catch (err: any) {
+            console.error(`[Async Rewrite Job Error] Erro ao enviar para "${site.siteName}":`, err.message);
+            job.results.push({
+              siteId: site.id,
+              siteName: site.siteName,
+              success: false,
+              error: err.message || 'Erro inesperado durante a reescrita ou publicação.',
+            });
+          }
+          count++;
+        }
+
+        job.status = 'completed';
+        job.progress = 100;
+        job.completedAt = new Date().toISOString();
+        job.currentStep = 'Processo finalizado com sucesso!';
+      })().catch((bgErr: any) => {
+        console.error(`[Async Rewrite Job Fatal] Erro geral:`, bgErr);
+        job.status = 'failed';
+        job.error = bgErr.message || 'Falha na execução do processo em segundo plano.';
       });
     }
   );
+
+  // Consultar Status em Tempo Real do Job de Reescrita (Polling do Frontend)
+  app.get('/api/scraper/rewrite-jobs/:jobId', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    const job = rewriteJobs.get(req.params.jobId);
+    if (!job) {
+      res.status(404).json({ success: false, error: 'Job de reescrita não encontrado.' });
+      return;
+    }
+    res.json({ success: true, job });
+  });
 
   // Delete Captured Article
   app.delete('/api/scraper/articles/:id', requireAuth, (req: AuthenticatedRequest, res: Response) => {
