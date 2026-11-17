@@ -382,8 +382,9 @@ export async function ensureImageMirroredToR2(
 }
 
 /**
- * Gera uma imagem editorial de fallback profissional via Pollinations / IA
- * caso o artigo original não possua imagem ou ela tenha falhado
+ * Gera uma imagem editorial de fallback profissional via Google Imagen 3 (DeepMind)
+ * caso o artigo original não possua imagem ou ela tenha falhado.
+ * PROIBIÇÃO ABSOLUTA: Nunca utilizar pollinations.ai, unsplash ou serviços com marca d'água.
  */
 export async function generateContextualEditorialImage(
   title: string,
@@ -395,39 +396,51 @@ export async function generateContextualEditorialImage(
       .trim()
       .slice(0, 120);
 
-    const pollinationUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt + ' realistic editorial journalism photography news 8k')}?width=1200&height=675&nologo=true`;
+    const settings = dbRepo.getSystemSettings();
+    const geminiKey = process.env.GEMINI_API_KEY || (settings as any).geminiApiKey;
 
-    const res = await fetch(pollinationUrl, {
-      signal: AbortSignal.timeout(20000),
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-      },
+    if (!geminiKey) {
+      console.warn('[Fallback Image Generator] Nenhuma chave Gemini configurada para o Google Imagen 3. Ignorando fallback para evitar marcas d\'água.');
+      return null;
+    }
+
+    const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${geminiKey}`;
+    const promptText = `${cleanPrompt}, editorial photojournalism, high quality 4k sharp focus, modern authentic photography, horizontal landscape 16:9, natural lighting, no text, no watermark`;
+
+    const res = await fetch(imagenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instances: [{ prompt: promptText }],
+        parameters: {
+          sampleCount: 1,
+          aspectRatio: '16:9',
+          outputMimeType: 'image/jpeg'
+        }
+      }),
+      signal: AbortSignal.timeout(25000)
     });
 
     if (res.ok) {
-      const arrayBuf = await res.arrayBuffer();
-      if (arrayBuf.byteLength >= 5000) {
-        const buffer = Buffer.from(arrayBuf);
-        const config = await getR2Config();
-        const filenameKey = `${articleId}-ia-gerada.jpg`;
-
-        if (config) {
-          const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
-          if (r2Url) {
-            return {
-              url: r2Url,
-              base64: `data:image/jpeg;base64,${buffer.toString('base64')}`,
-            };
-          }
+      const data: any = await res.json();
+      const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
+      if (base64Bytes) {
+        const buffer = Buffer.from(base64Bytes, 'base64');
+        const filenameKey = `${articleId}-imagen3.jpg`;
+        const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
+        if (r2Url) {
+          return {
+            url: r2Url,
+            base64: `data:image/jpeg;base64,${base64Bytes}`
+          };
         }
-
-        return {
-          url: pollinationUrl,
-          base64: `data:image/jpeg;base64,${buffer.toString('base64')}`,
-        };
       }
     }
+  } catch (err: any) {
+    console.warn('[Fallback Image Generator] Falha ao gerar imagem editorial via Google Imagen 3:', err.message);
+  }
+
+  return null;
   } catch (err: any) {
     console.warn('[Fallback Image Generator] Falha ao gerar imagem editorial via IA:', err.message);
   }
