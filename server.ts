@@ -41,6 +41,8 @@ import {
   testWordPressConnection,
   verifyAndRepairPostFeaturedImage,
   repairAllMissingImagesForSite,
+  fetchRemoteWordPressLogs,
+  clearRemoteWordPressLogs,
 } from './src/server/services/wordpress-sync';
 import {
   UserRole,
@@ -1457,6 +1459,56 @@ async function startServer() {
       } catch (err: any) {
         console.error('[Repair Missing Images Error]', err);
         res.status(500).json({ success: false, error: err.message || 'Erro ao varrer e reparar imagens.' });
+      }
+    }
+  );
+
+  // Consultar Logs e Diagnóstico em Tempo Real do Plugin no WordPress do Cliente (Sob Demanda)
+  app.get(
+    '/api/wordpress/sites/:id/remote-logs',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const site = dbRepo.getWordPressSiteById(req.params.id);
+        if (!site) {
+          res.status(404).json({ success: false, error: 'Site não encontrado.' });
+          return;
+        }
+        if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+          res.status(403).json({ success: false, error: 'Acesso negado para este site.' });
+          return;
+        }
+
+        const limit = Math.min(200, Number(req.query.limit) || 100);
+        const result = await fetchRemoteWordPressLogs(site.id, limit);
+        res.json(result);
+      } catch (err: any) {
+        console.error('[Remote Logs Error]', err);
+        res.status(500).json({ success: false, error: err.message || 'Erro ao consultar logs remotos.' });
+      }
+    }
+  );
+
+  // Limpar Logs Remotos no Plugin do WordPress do Cliente
+  app.delete(
+    '/api/wordpress/sites/:id/remote-logs',
+    requireAuth,
+    async (req: AuthenticatedRequest, res: Response) => {
+      try {
+        const site = dbRepo.getWordPressSiteById(req.params.id);
+        if (!site) {
+          res.status(404).json({ success: false, error: 'Site não encontrado.' });
+          return;
+        }
+        if (req.auth?.role !== UserRole.ADMIN && site.userId !== req.auth?.sub) {
+          res.status(403).json({ success: false, error: 'Acesso negado para este site.' });
+          return;
+        }
+
+        const result = await clearRemoteWordPressLogs(site.id);
+        res.json(result);
+      } catch (err: any) {
+        res.status(500).json({ success: false, error: err.message || 'Erro ao limpar logs remotos.' });
       }
     }
   );

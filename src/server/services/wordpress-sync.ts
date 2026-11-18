@@ -118,18 +118,20 @@ export async function syncArticleToWordPress(
     seo_description: postExcerpt,
   };
 
-  // Tenta primeiro endpoint moderno do Auto Post AI, com fallback para criador-conteudo caso o WP use a base legada
+  // Endpoints prioritários: 1º Rota amigável com permalink, 2º Rota nativa com rest_route (caso permalinks simples), 3º Fallback legado
   const endpoints = [
-    `${baseUrl}/wp-json/autopost-ai/v1/posts`,
-    `${baseUrl}/wp-json/criador-conteudo/v1/posts`,
+    { url: `${baseUrl}/wp-json/autopost-ai/v1/posts`, isPrimary: true },
+    { url: `${baseUrl}/?rest_route=/autopost-ai/v1/posts`, isPrimary: true },
+    { url: `${baseUrl}/wp-json/criador-conteudo/v1/posts`, isPrimary: false },
   ];
 
   let lastError: string | null = null;
+  let primaryError: string | null = null;
   let responseData: any = null;
 
   for (const ep of endpoints) {
     try {
-      const resp = await fetch(ep, {
+      const resp = await fetch(ep.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -145,25 +147,35 @@ export async function syncArticleToWordPress(
         break;
       } else {
         const errText = await resp.text();
-        lastError = `HTTP ${resp.status} em ${ep}: ${errText.slice(0, 200)}`;
+        const formattedErr = `HTTP ${resp.status} em ${ep.url}: ${errText.slice(0, 200)}`;
+        lastError = formattedErr;
+        if (ep.isPrimary && !primaryError) {
+          primaryError = formattedErr;
+        }
       }
     } catch (err: any) {
-      lastError = `Falha de rede em ${ep}: ${err.message}`;
+      const formattedNetErr = `Falha de rede em ${ep.url}: ${err.message}`;
+      lastError = formattedNetErr;
+      if (ep.isPrimary && !primaryError) {
+        primaryError = formattedNetErr;
+      }
     }
   }
 
   if (!responseData) {
+    // Dá preferência para o erro da rota oficial para orientar o usuário com precisão
+    const effectiveError = primaryError || lastError || 'Erro desconhecido ao tentar comunicar com o WordPress.';
     dbRepo.appendWordPressLog({
       siteId: site.id,
       siteName: site.siteName,
       action: 'POST_PUBLISH_FAILED',
       status: 'error',
-      message: `Falha ao sincronizar artigo "${postTitle}": ${lastError}`,
-      details: { articleId, error: lastError },
+      message: `Falha ao sincronizar artigo "${postTitle}": ${effectiveError}`,
+      details: { articleId, error: effectiveError },
     });
 
     dbRepo.updateWordPressSite(site.id, { status: 'error' });
-    throw new Error(`Erro ao conectar com o WordPress: ${lastError}`);
+    throw new Error(`Erro ao conectar com o WordPress: ${effectiveError}`);
   }
 
   const wpPostId = responseData.post_id || responseData.id;
@@ -302,8 +314,11 @@ export async function testWordPressConnection(siteId: string): Promise<{
 
   const endpoints = [
     `${baseUrl}/wp-json/autopost-ai/v1/status`,
+    `${baseUrl}/?rest_route=/autopost-ai/v1/status`,
     `${baseUrl}/wp-json/criador-conteudo/v1/status`,
   ];
+
+  let testErrorDetail = '';
 
   for (const ep of endpoints) {
     try {
@@ -336,8 +351,12 @@ export async function testWordPressConnection(siteId: string): Promise<{
           message: 'Conexão ativa e validada com sucesso!',
           details: data,
         };
+      } else {
+        const errBody = await resp.text();
+        testErrorDetail = `HTTP ${resp.status} em ${ep}: ${errBody.slice(0, 160)}`;
       }
     } catch (e: any) {
+      testErrorDetail = `Falha de rede em ${ep}: ${e.message}`;
       console.warn(`[WordPress Test] Endpoint ${ep} falhou:`, e.message);
     }
   }
@@ -348,13 +367,23 @@ export async function testWordPressConnection(siteId: string): Promise<{
     siteName: site.siteName,
     action: 'CONNECTION_TEST_FAILED',
     status: 'error',
-    message: `Não foi possível obter resposta positiva de ${baseUrl}/wp-json/autopost-ai/v1/status`,
+    message: `Falha ao testar conexão com ${site.siteName}: ${testErrorDetail || 'Sem resposta do servidor'}`,
   });
+
+  let friendlyMessage = 'Falha ao conectar. Verifique se o plugin está ativo no WordPress e a chave de licença está salva.';
+  if (testErrorDetail.includes('404')) {
+    friendlyMessage = 'HTTP 404: Rota da REST API não encontrada. Verifique se o plugin Auto Post WordPress AI está ativo. Se estiver ativo, vá em Configurações > Links Permanentes no WordPress e clique em "Salvar Alterações".';
+  } else if (testErrorDetail.includes('401') || testErrorDetail.includes('403')) {
+    friendlyMessage = 'Chave de Licença não autorizada. Verifique se a chave API Key configurada no plugin no WordPress é idêntica à deste painel.';
+  } else if (testErrorDetail) {
+    friendlyMessage = `${friendlyMessage} (${testErrorDetail})`;
+  }
 
   return {
     success: false,
     status: 'error',
-    message: 'Falha ao conectar. Verifique se o plugin está ativo no WordPress e a chave de licença está salva.',
+    message: friendlyMessage,
+    details: { rawError: testErrorDetail },
   };
 }
 
@@ -643,4 +672,194 @@ export async function repairAllMissingImagesForSite(siteId: string): Promise<{
     failed: failedCount,
     details,
   };
+}
+
+/**
+ * Interface dos Logs e Diagnósticos Remotos do WordPress
+ */
+export interface RemoteWordPressLogResult {
+  success: boolean;
+  reachable: boolean;
+  httpStatus?: number;
+  message?: string;
+  error?: string;
+  diagnosis?: {
+    cause: string;
+    actionable_steps: string[];
+  };
+  server_info?: {
+    plugin_version?: string;
+    wp_version?: string;
+    php_version?: string;
+    site_url?: string;
+    site_name?: string;
+    permalink_structure?: string;
+    rest_url?: string;
+    memory_limit?: string;
+    max_execution_time?: string;
+    upload_max_filesize?: string;
+    seo_plugin?: string;
+  };
+  counts?: {
+    total: number;
+    error: number;
+    warning: number;
+    success: number;
+    info: number;
+  };
+  logs: Array<{
+    id?: string;
+    timestamp: string;
+    timestamp_iso?: string;
+    level: 'info' | 'success' | 'warning' | 'error';
+    action: string;
+    message: string;
+    details?: any;
+  }>;
+}
+
+/**
+ * Consulta sob demanda em tempo real os logs internos do plugin Auto Post WordPress AI instalado no site do cliente.
+ */
+export async function fetchRemoteWordPressLogs(siteId: string, limit: number = 100): Promise<RemoteWordPressLogResult> {
+  const site = dbRepo.getWordPressSiteById(siteId);
+  if (!site) {
+    throw new Error(`Site com ID ${siteId} não encontrado.`);
+  }
+
+  let baseUrl = site.siteUrl.trim().replace(/\/$/, '');
+  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+    baseUrl = `https://${baseUrl}`;
+  }
+
+  const endpoints = [
+    `${baseUrl}/wp-json/autopost-ai/v1/logs?limit=${limit}`,
+    `${baseUrl}/?rest_route=/autopost-ai/v1/logs&limit=${limit}`,
+  ];
+
+  let lastStatus = 0;
+  let lastErrorText = '';
+
+  for (const ep of endpoints) {
+    try {
+      const resp = await fetch(ep, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': site.apiKey,
+          'User-Agent': 'AutoPostAi-Sync/1.0',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+
+      lastStatus = resp.status;
+
+      if (resp.ok) {
+        const data = await resp.json();
+        return {
+          success: true,
+          reachable: true,
+          httpStatus: resp.status,
+          server_info: {
+            plugin_version: data.plugin_version || '1.3.0',
+            wp_version: data.wp_version,
+            php_version: data.php_version,
+            site_url: data.site_url || site.siteUrl,
+            site_name: data.site_name || site.siteName,
+            permalink_structure: data.permalink_structure,
+            rest_url: data.rest_url,
+            memory_limit: data.memory_limit,
+            max_execution_time: data.max_execution_time,
+            upload_max_filesize: data.upload_max_filesize,
+            seo_plugin: data.seo_plugin,
+          },
+          counts: data.counts || {
+            total: (data.logs || []).length,
+            error: 0,
+            warning: 0,
+            success: 0,
+            info: (data.logs || []).length,
+          },
+          logs: data.logs || [],
+        };
+      } else {
+        const text = await resp.text();
+        lastErrorText = text;
+      }
+    } catch (netErr: any) {
+      lastErrorText = netErr.message;
+    }
+  }
+
+  // Falha de comunicação: gerar diagnóstico detalhado com recomendações
+  let cause = 'Não foi possível conectar ao endpoint de logs do WordPress.';
+  const actionableSteps: string[] = [];
+
+  if (lastStatus === 404) {
+    cause = 'HTTP 404 (Rota não encontrada): O plugin Auto Post WordPress AI pode estar inativo no WordPress ou as rotas REST ainda não foram registradas.';
+    actionableSteps.push('1. Acesse o painel do WordPress do cliente em "Plugins" e confirme se "Auto Post WordPress AI" está Ativo.');
+    actionableSteps.push('2. Acesse Configurações > Links Permanentes no WordPress e apenas clique em "Salvar Alterações" para forçar a reescrita das regras de rota da REST API.');
+    actionableSteps.push('3. Certifique-se de que o cliente instalou a versão mais recente do plugin (baixe o .zip pelo botão "Baixar Plugin (.zip)" neste painel).');
+  } else if (lastStatus === 401 || lastStatus === 403) {
+    cause = `HTTP ${lastStatus} (Não Autorizado): A Chave de Licença (API Key) não foi reconhecida ou não foi salva corretamente nas configurações do plugin no WordPress.`;
+    actionableSteps.push('1. Acesse o painel do WordPress do cliente no menu "Auto Post AI".');
+    actionableSteps.push(`2. Cole exatamente a Chave de Licença "${site.apiKey}" no campo correspondente.`);
+    actionableSteps.push('3. Clique em "Salvar Configurações" e depois no botão "Testar Conexão Agora".');
+  } else if (lastStatus === 500 || lastStatus === 502 || lastStatus === 504) {
+    cause = `HTTP ${lastStatus} (Erro no Servidor): O servidor web da hospedagem do cliente retornou erro interno ou timeout ao processar a requisição.`;
+    actionableSteps.push('1. Verifique os logs de erro do PHP no servidor de hospedagem do WordPress.');
+    actionableSteps.push('2. Verifique se há algum firewall ou plugin de segurança (ex: Wordfence, iThemes, Cloudflare WAF) bloqueando requisições REST externas.');
+  } else {
+    cause = `Falha de rede ou timeout na conexão com o site: ${lastErrorText || 'sem resposta do host'}.`;
+    actionableSteps.push(`1. Verifique se a URL cadastrada (${site.siteUrl}) está acessível publicamente com HTTPS válido.`);
+    actionableSteps.push('2. Verifique se o servidor não está bloqueando requisições automatizadas ou IPs da nuvem.');
+  }
+
+  return {
+    success: false,
+    reachable: false,
+    httpStatus: lastStatus || undefined,
+    error: `Erro ao obter logs remotos: HTTP ${lastStatus || 'Falha de Rede'}: ${lastErrorText.slice(0, 160)}`,
+    diagnosis: {
+      cause,
+      actionable_steps: actionableSteps,
+    },
+    logs: [],
+  };
+}
+
+/**
+ * Limpa o histórico de logs mantidos no plugin no WordPress do cliente.
+ */
+export async function clearRemoteWordPressLogs(siteId: string): Promise<{ success: boolean; message: string }> {
+  const site = dbRepo.getWordPressSiteById(siteId);
+  if (!site) throw new Error(`Site com ID ${siteId} não encontrado.`);
+
+  let baseUrl = site.siteUrl.trim().replace(/\/$/, '');
+  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+    baseUrl = `https://${baseUrl}`;
+  }
+
+  const endpoints = [
+    `${baseUrl}/wp-json/autopost-ai/v1/logs`,
+    `${baseUrl}/?rest_route=/autopost-ai/v1/logs`,
+  ];
+
+  for (const ep of endpoints) {
+    try {
+      const resp = await fetch(ep, {
+        method: 'DELETE',
+        headers: {
+          'X-API-Key': site.apiKey,
+          'User-Agent': 'AutoPostAi-Sync/1.0',
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (resp.ok) {
+        return { success: true, message: 'Logs do plugin no WordPress limpos com sucesso.' };
+      }
+    } catch {}
+  }
+
+  throw new Error('Não foi possível conectar ao WordPress para limpar os logs.');
 }

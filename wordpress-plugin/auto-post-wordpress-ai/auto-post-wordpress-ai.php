@@ -3,7 +3,7 @@
  * Plugin Name: Auto Post WordPress AI
  * Plugin URI: https://github.com/Diegaosx/Auto-post-wordpress-ai
  * Description: Sincronização automatizada e publicação de artigos com Inteligência Artificial via REST API segura.
- * Version: 1.2.1
+ * Version: 1.3.0
  * Author: Auto Post AI Team
  * License: GPL v2 or later
  * Text Domain: auto-post-wordpress-ai
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('AUTO_POST_AI_VERSION', '1.2.1');
+define('AUTO_POST_AI_VERSION', '1.3.0');
 define('AUTO_POST_AI_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('AUTO_POST_AI_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('AUTO_POST_AI_DEFAULT_API_URL', '{{API_URL}}');
@@ -28,6 +28,7 @@ class AutoPostWordPressAI {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('rest_api_init', array($this, 'register_rest_routes'));
         add_action('wp_ajax_autopost_test_connection', array($this, 'ajax_test_connection'));
+        add_action('wp_ajax_autopost_clear_logs', array($this, 'ajax_clear_logs'));
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
     }
@@ -51,6 +52,62 @@ class AutoPostWordPressAI {
         }
     }
 
+    /**
+     * Sistema de Logging Interno Rotativo (mantém até 200 eventos mais recentes)
+     */
+    public function log($action, $message, $level = 'info', $details = array()) {
+        $logs = get_option('autopost_ai_logs', array());
+        if (!is_array($logs)) {
+            $logs = array();
+        }
+
+        $entry = array(
+            'id'            => uniqid('log_', true),
+            'timestamp'     => current_time('mysql'),
+            'timestamp_iso' => gmdate('c'),
+            'level'         => in_array($level, array('info', 'success', 'warning', 'error')) ? $level : 'info',
+            'action'        => sanitize_text_field($action),
+            'message'       => sanitize_text_field($message),
+            'details'       => $details,
+        );
+
+        array_unshift($logs, $entry);
+        if (count($logs) > 200) {
+            $logs = array_slice($logs, 0, 200);
+        }
+
+        update_option('autopost_ai_logs', $logs, false);
+        return $entry;
+    }
+
+    public function get_logs($limit = 100, $level = '') {
+        $logs = get_option('autopost_ai_logs', array());
+        if (!is_array($logs)) {
+            return array();
+        }
+
+        if (!empty($level) && $level !== 'all') {
+            $logs = array_filter($logs, function($l) use ($level) {
+                return isset($l['level']) && $l['level'] === $level;
+            });
+            $logs = array_values($logs);
+        }
+
+        return array_slice($logs, 0, max(1, min((int) $limit, 200)));
+    }
+
+    public function clear_logs() {
+        update_option('autopost_ai_logs', array(), false);
+        $this->log('LOGS_CLEARED', 'Histórico de logs foi limpo com sucesso.', 'info');
+        return true;
+    }
+
+    public function ajax_clear_logs() {
+        check_ajax_referer('autopost_clear_logs_nonce');
+        $this->clear_logs();
+        wp_send_json_success(array('message' => 'Histórico de logs foi limpo com sucesso.'));
+    }
+
     public function activate() {
         add_option('autopost_ai_api_key', '');
         $default = defined('AUTO_POST_AI_DEFAULT_API_URL') && AUTO_POST_AI_DEFAULT_API_URL !== '{{API_URL}}'
@@ -59,10 +116,12 @@ class AutoPostWordPressAI {
         update_option('autopost_ai_api_url', $default);
         add_option('autopost_ai_status', 'disconnected');
         add_option('autopost_ai_last_sync', 'Nunca');
+        $this->log('PLUGIN_ACTIVATED', 'Plugin Auto Post WordPress AI ativado na versão ' . AUTO_POST_AI_VERSION, 'success');
         flush_rewrite_rules();
     }
 
     public function deactivate() {
+        $this->log('PLUGIN_DEACTIVATED', 'Plugin Auto Post WordPress AI foi desativado.', 'warning');
         flush_rewrite_rules();
     }
 
@@ -193,7 +252,7 @@ class AutoPostWordPressAI {
                 <div id="test-result-box" style="margin-top: 16px; display: none;"></div>
             </div>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px;">
                 <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px;">
                     <h3 style="margin-top: 0; color: #334155; font-size: 15px; font-weight: 600;">Status da Instalação</h3>
                     <ul style="margin: 0; padding: 0; list-style: none; font-size: 13px; color: #475569; line-height: 2;">
@@ -212,6 +271,73 @@ class AutoPostWordPressAI {
                         <li>✅ Meta Tags SEO (Yoast, RankMath, All In One)</li>
                     </ul>
                 </div>
+            </div>
+
+            <?php
+            $recent_logs = $this->get_logs(25);
+            ?>
+            <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #f1f5f9; padding-bottom: 12px; margin-bottom: 16px;">
+                    <div>
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 8px;">
+                            📋 Logs de Sincronização & Diagnóstico em Tempo Real
+                        </h3>
+                        <p style="margin: 4px 0 0 0; font-size: 13px; color: #64748b;">
+                            Histórico dos últimos eventos registrados localmente para suporte e auditoria.
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button type="button" id="btn-clear-logs" class="button button-secondary" style="font-size: 12px; height: auto; padding: 4px 12px; color: #dc2626;">
+                            Limpar Histórico
+                        </button>
+                    </div>
+                </div>
+
+                <?php if (empty($recent_logs)): ?>
+                    <p style="color: #94a3b8; font-size: 13px; margin: 20px 0; text-align: center; font-style: italic;">
+                        Nenhum evento registrado ainda. Conecte sua chave e execute um teste de conexão ou publicação.
+                    </p>
+                <?php else: ?>
+                    <div style="max-height: 380px; overflow-y: auto; border: 1px solid #f1f5f9; border-radius: 8px;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+                            <thead>
+                                <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; color: #475569;">
+                                    <th style="padding: 10px 14px; width: 140px;">Data / Hora</th>
+                                    <th style="padding: 10px 14px; width: 80px;">Nível</th>
+                                    <th style="padding: 10px 14px; width: 150px;">Ação</th>
+                                    <th style="padding: 10px 14px;">Mensagem</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($recent_logs as $lg): 
+                                    $lvl = $lg['level'] ?? 'info';
+                                    $bg = '#f8fafc'; $color = '#475569';
+                                    if ($lvl === 'success') { $bg = '#dcfce7'; $color = '#15803d'; }
+                                    elseif ($lvl === 'error') { $bg = '#fee2e2'; $color = '#b91c1c'; }
+                                    elseif ($lvl === 'warning') { $bg = '#fef3c7'; $color = '#b45309'; }
+                                    elseif ($lvl === 'info') { $bg = '#e0f2fe'; $color = '#0369a1'; }
+                                ?>
+                                <tr style="border-bottom: 1px solid #f1f5f9;">
+                                    <td style="padding: 8px 14px; color: #64748b; font-family: monospace; font-size: 11px;">
+                                        <?php echo esc_html($lg['timestamp'] ?? ''); ?>
+                                    </td>
+                                    <td style="padding: 8px 14px;">
+                                        <span style="background: <?php echo $bg; ?>; color: <?php echo $color; ?>; padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: 700; text-transform: uppercase;">
+                                            <?php echo esc_html($lvl); ?>
+                                        </span>
+                                    </td>
+                                    <td style="padding: 8px 14px; font-weight: 600; color: #334155;">
+                                        <code><?php echo esc_html($lg['action'] ?? ''); ?></code>
+                                    </td>
+                                    <td style="padding: 8px 14px; color: #1e293b;">
+                                        <?php echo esc_html($lg['message'] ?? ''); ?>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -242,6 +368,22 @@ class AutoPostWordPressAI {
                 }).always(function() {
                     btn.prop('disabled', false);
                     spinner.removeClass('is-active');
+                });
+            });
+
+            $('#btn-clear-logs').on('click', function(e) {
+                e.preventDefault();
+                if (!confirm('Deseja realmente limpar todos os logs do plugin no WordPress?')) return;
+                var btn = $(this);
+                btn.prop('disabled', true);
+
+                $.post(ajaxurl, {
+                    action: 'autopost_clear_logs',
+                    _ajax_nonce: '<?php echo wp_create_nonce('autopost_clear_logs_nonce'); ?>'
+                }, function(response) {
+                    location.reload();
+                }).always(function() {
+                    btn.prop('disabled', false);
                 });
             });
         });
@@ -372,11 +514,29 @@ class AutoPostWordPressAI {
             'callback' => array($this, 'rest_upload_media'),
             'permission_callback' => array($this, 'rest_verify_auth'),
         ));
+
+        // 6. Logs do Sistema & Diagnóstico em Tempo Real
+        register_rest_route($namespace, '/logs', array(
+            array(
+                'methods' => 'GET',
+                'callback' => array($this, 'rest_get_logs'),
+                'permission_callback' => array($this, 'rest_verify_auth'),
+            ),
+            array(
+                'methods' => 'DELETE',
+                'callback' => array($this, 'rest_clear_logs'),
+                'permission_callback' => array($this, 'rest_verify_auth'),
+            ),
+        ));
     }
 
     public function rest_verify_auth($request) {
         $saved_key = get_option('autopost_ai_api_key', '');
         if (empty($saved_key)) {
+            $this->log('AUTH_ERROR', 'Tentativa de acesso REST rejeitada: Chave de Licença não configurada no plugin.', 'error', array(
+                'ip' => $_SERVER['REMOTE_ADDR'] ?? 'desconhecido',
+                'uri' => $_SERVER['REQUEST_URI'] ?? '',
+            ));
             return new WP_Error('rest_forbidden', 'Plugin ainda não possui Chave de Licença configurada.', array('status' => 403));
         }
 
@@ -389,10 +549,70 @@ class AutoPostWordPressAI {
         }
 
         if (empty($provided_key) || !hash_equals($saved_key, $provided_key)) {
+            $this->log('AUTH_ERROR', 'Tentativa de acesso REST rejeitada: Chave de Licença (X-API-Key) inválida ou divergente.', 'error', array(
+                'ip' => $_SERVER['REMOTE_ADDR'] ?? 'desconhecido',
+                'uri' => $_SERVER['REQUEST_URI'] ?? '',
+                'has_key' => !empty($provided_key),
+            ));
             return new WP_Error('rest_forbidden', 'Chave de Licença (X-API-Key) inválida ou não autorizada.', array('status' => 401));
         }
 
         return true;
+    }
+
+    public function rest_get_logs($request) {
+        $limit = intval($request->get_param('limit') ?: 100);
+        $level = sanitize_text_field($request->get_param('level') ?: '');
+
+        $logs = $this->get_logs($limit, $level);
+        $all_logs = get_option('autopost_ai_logs', array());
+        if (!is_array($all_logs)) $all_logs = array();
+
+        $counts = array(
+            'total' => count($all_logs),
+            'error' => 0,
+            'warning' => 0,
+            'success' => 0,
+            'info' => 0,
+        );
+
+        foreach ($all_logs as $l) {
+            $lvl = $l['level'] ?? 'info';
+            if (isset($counts[$lvl])) {
+                $counts[$lvl]++;
+            }
+        }
+
+        global $wp_version;
+        $seo_plugin = 'Nenhum';
+        if (defined('WPSEO_VERSION')) $seo_plugin = 'Yoast SEO ' . WPSEO_VERSION;
+        elseif (defined('RANK_MATH_VERSION')) $seo_plugin = 'Rank Math ' . RANK_MATH_VERSION;
+        elseif (defined('AIOSEO_VERSION')) $seo_plugin = 'All in One SEO ' . AIOSEO_VERSION;
+
+        return rest_ensure_response(array(
+            'success'             => true,
+            'plugin_version'      => AUTO_POST_AI_VERSION,
+            'wp_version'          => $wp_version,
+            'php_version'         => phpversion(),
+            'site_url'            => get_site_url(),
+            'site_name'           => get_bloginfo('name'),
+            'permalink_structure' => get_option('permalink_structure') ?: 'Simples (sem reescrita /?p=123)',
+            'rest_url'            => get_rest_url(),
+            'memory_limit'        => ini_get('memory_limit'),
+            'max_execution_time'  => ini_get('max_execution_time'),
+            'upload_max_filesize' => ini_get('upload_max_filesize'),
+            'seo_plugin'          => $seo_plugin,
+            'counts'              => $counts,
+            'logs'                => $logs,
+        ));
+    }
+
+    public function rest_clear_logs() {
+        $this->clear_logs();
+        return rest_ensure_response(array(
+            'success' => true,
+            'message' => 'Logs do plugin no WordPress limpos com sucesso.',
+        ));
     }
 
     public function rest_get_status() {
@@ -495,12 +715,23 @@ class AutoPostWordPressAI {
         $source_url = esc_url_raw($body['source_url'] ?? $body['original_url'] ?? '');
 
         if (empty($title) || empty($content)) {
+            $this->log('POST_ERROR', 'Tentativa de criar post falhou: Título e Conteúdo são obrigatórios.', 'error');
             return new WP_Error('invalid_payload', 'Título e Conteúdo são campos obrigatórios.', array('status' => 400));
         }
+
+        $this->log('POST_RECEIVED', "Recebida solicitação de publicação para o artigo: \"{$title}\"", 'info', array(
+            'status'     => $status,
+            'categories' => $category_names,
+            'has_image'  => !empty($image_url) || !empty($body['image_base64']),
+        ));
 
         // Escudo Anti-Duplicação: Verifica se o post já existe neste WordPress
         $existing_post_id = $this->find_existing_post($article_id, $source_url, $title);
         if ($existing_post_id) {
+            $this->log('DUPLICATE_PREVENTED', "Post duplicado prevenido para \"{$title}\" (Post existente #{$existing_post_id})", 'warning', array(
+                'post_id' => $existing_post_id,
+            ));
+
             // Garante que os metadados de rastreio existam no post já criado
             if (!empty($article_id)) {
                 update_post_meta($existing_post_id, '_autopost_ai_article_id', $article_id);
@@ -555,8 +786,14 @@ class AutoPostWordPressAI {
         $post_id = wp_insert_post($post_arr, true);
 
         if (is_wp_error($post_id)) {
+            $this->log('POST_INSERT_FAILED', 'Erro ao inserir post no WordPress: ' . $post_id->get_error_message(), 'error');
             return new WP_Error('post_insert_failed', $post_id->get_error_message(), array('status' => 500));
         }
+
+        $this->log('POST_INSERTED', "Post #{$post_id} criado no banco com status \"{$status}\".", 'info', array(
+            'post_id' => $post_id,
+            'status'  => $status,
+        ));
 
         // Salvar referência da origem e ID único do artigo
         update_post_meta($post_id, '_autopost_ai_generated', '1');
@@ -575,6 +812,12 @@ class AutoPostWordPressAI {
         $featured_thumb_id = $this->process_featured_image($post_id, $body);
 
         update_option('autopost_ai_last_sync', current_time('mysql'));
+
+        $this->log('POST_PUBLISHED', "Artigo \"{$title}\" finalizado e sincronizado com sucesso! (ID #{$post_id})", 'success', array(
+            'post_id'           => $post_id,
+            'permalink'         => get_permalink($post_id),
+            'featured_image_id' => $featured_thumb_id,
+        ));
 
         return rest_ensure_response(array(
             'success'            => true,
@@ -728,6 +971,9 @@ class AutoPostWordPressAI {
             set_post_thumbnail($post_id, $featured_media);
             update_post_meta($post_id, '_thumbnail_id', $featured_media);
             $this->apply_seo_image_tags($post_id, $featured_media, $params);
+            $this->log('IMAGE_ATTACHED', "Imagem vinculada via attachment ID #{$featured_media} ao post #{$post_id}.", 'info', array(
+                'attachment_id' => $featured_media,
+            ));
             return $featured_media;
         }
 
@@ -738,12 +984,28 @@ class AutoPostWordPressAI {
             $res = $this->upload_base64_image($image_base64, $post_id, $title, $alt_text, $caption, $description);
             if (!is_wp_error($res) && is_numeric($res)) {
                 $attachment_id = (int) $res;
+                $this->log('IMAGE_BASE64_SAVED', "Imagem base64 convertida e vinculada com sucesso (Attachment #{$attachment_id}) ao post #{$post_id}.", 'success', array(
+                    'attachment_id' => $attachment_id,
+                ));
+            } else {
+                $err_msg = is_wp_error($res) ? $res->get_error_message() : 'Erro desconhecido';
+                $this->log('IMAGE_BASE64_FAILED', "Falha ao converter imagem base64 para o post #{$post_id}: {$err_msg}", 'warning');
             }
         }
 
         // 2. Se não veio base64 ou falhou, tentar download resiliente da URL externa
         if (!$attachment_id && !empty($image_url)) {
             $attachment_id = $this->upload_external_image_resilient($image_url, $post_id, $title, $alt_text, $caption, $description);
+            if ($attachment_id) {
+                $this->log('IMAGE_DOWNLOAD_SAVED', "Imagem externa baixada e vinculada com sucesso (Attachment #{$attachment_id}) ao post #{$post_id}.", 'success', array(
+                    'attachment_id' => $attachment_id,
+                    'url'           => substr($image_url, 0, 120),
+                ));
+            } else {
+                $this->log('IMAGE_DOWNLOAD_FAILED', "Não foi possível baixar a imagem da URL externa para o post #{$post_id}.", 'warning', array(
+                    'url' => substr($image_url, 0, 120),
+                ));
+            }
         }
 
         if ($attachment_id && is_numeric($attachment_id)) {

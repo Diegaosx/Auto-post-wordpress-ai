@@ -36,6 +36,12 @@ import {
   Code,
   Image as ImageIcon,
   Wand2,
+  Terminal,
+  Activity,
+  Info,
+  ChevronDown,
+  ChevronUp,
+  FileWarning,
 } from 'lucide-react';
 
 interface WordPressSitesViewProps {
@@ -155,6 +161,112 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
   const [syncR2Feedback, setSyncR2Feedback] = useState<string | null>(null);
   const [isRepairingAllImages, setIsRepairingAllImages] = useState(false);
   const [repairingArticleId, setRepairingArticleId] = useState<string | null>(null);
+
+  // Remote Plugin Logs Modal State
+  const [viewingLogsSite, setViewingLogsSite] = useState<WordPressSite | null>(null);
+  const [loadingRemoteLogs, setLoadingRemoteLogs] = useState(false);
+  const [remoteLogsData, setRemoteLogsData] = useState<any | null>(null);
+  const [remoteLogFilterLevel, setRemoteLogFilterLevel] = useState<string>('all');
+  const [remoteLogSearch, setRemoteLogSearch] = useState<string>('');
+  const [clearingRemoteLogs, setClearingRemoteLogs] = useState(false);
+  const [copiedDiagnostic, setCopiedDiagnostic] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+
+  const fetchRemoteLogs = async (siteId: string) => {
+    setLoadingRemoteLogs(true);
+    try {
+      const res = await fetch(`/api/wordpress/sites/${siteId}/remote-logs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setRemoteLogsData(data);
+    } catch (err: any) {
+      setRemoteLogsData({
+        success: false,
+        reachable: false,
+        error: err.message || 'Falha na requisição para obter logs remotos.',
+        diagnosis: {
+          cause: 'Erro de rede ao comunicar com o servidor da aplicação.',
+          actionable_steps: ['Verifique a conexão de rede ou tente novamente em alguns instantes.'],
+        },
+        logs: [],
+      });
+    } finally {
+      setLoadingRemoteLogs(false);
+    }
+  };
+
+  const handleOpenRemoteLogs = (site: WordPressSite) => {
+    setViewingLogsSite(site);
+    setRemoteLogsData(null);
+    setRemoteLogFilterLevel('all');
+    setRemoteLogSearch('');
+    setExpandedLogId(null);
+    fetchRemoteLogs(site.id);
+  };
+
+  const handleClearRemoteLogs = async () => {
+    if (!viewingLogsSite) return;
+    if (!window.confirm(`Deseja realmente limpar todos os logs registrados no plugin WordPress do site "${viewingLogsSite.siteName}"?`)) {
+      return;
+    }
+    setClearingRemoteLogs(true);
+    try {
+      const res = await fetch(`/api/wordpress/sites/${viewingLogsSite.id}/remote-logs`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchRemoteLogs(viewingLogsSite.id);
+      } else {
+        alert(data.error || 'Erro ao limpar logs remotos.');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Falha ao solicitar limpeza de logs.');
+    } finally {
+      setClearingRemoteLogs(false);
+    }
+  };
+
+  const handleCopyDiagnosticReport = () => {
+    if (!viewingLogsSite || !remoteLogsData) return;
+    const serverInfo = remoteLogsData.server_info || {};
+    const diag = remoteLogsData.diagnosis;
+    const textReport = [
+      `====================================================`,
+      `DIAGNÓSTICO & LOGS AUTO POST WORDPRESS AI`,
+      `Portal: ${viewingLogsSite.siteName} (${viewingLogsSite.siteUrl})`,
+      `Data do Relatório: ${new Date().toLocaleString()}`,
+      `Status da Conexão: ${remoteLogsData.reachable ? 'CONECTADO / ACESSÍVEL' : 'INACESSÍVEL (HTTP ' + (remoteLogsData.httpStatus || 'N/A') + ')'}`,
+      `====================================================`,
+      ``,
+      `[INFORMAÇÕES DO SISTEMA WORDPRESS]`,
+      `- Versão do Plugin: ${serverInfo.plugin_version || 'N/A'}`,
+      `- Versão do WordPress: ${serverInfo.wp_version || 'N/A'}`,
+      `- Versão do PHP: ${serverInfo.php_version || 'N/A'}`,
+      `- Estrutura de Permalinks: ${serverInfo.permalink_structure || 'N/A'}`,
+      `- Limite de Memória (memory_limit): ${serverInfo.memory_limit || 'N/A'}`,
+      `- Plugin SEO Ativo: ${serverInfo.seo_plugin || 'Nenhum detectado'}`,
+      `- URL REST Base: ${serverInfo.rest_url || 'N/A'}`,
+      ``,
+      diag
+        ? `[DIAGNÓSTICO DE FALHA]\n- Causa: ${diag.cause}\n- Passos Recomendados:\n${(diag.actionable_steps || []).map((s: string) => `  * ${s}`).join('\n')}\n`
+        : ``,
+      `[HISTÓRICO DOS ÚLTIMOS EVENTOS (${(remoteLogsData.logs || []).length})]`,
+      ...(remoteLogsData.logs || []).map(
+        (l: any, i: number) =>
+          `#${i + 1} [${l.timestamp || l.timestamp_iso}] [${(l.level || 'info').toUpperCase()}] ${l.action}: ${l.message}${
+            l.details ? ' | Detalhes: ' + JSON.stringify(l.details) : ''
+          }`
+      ),
+      `====================================================`,
+    ].join('\n');
+
+    navigator.clipboard.writeText(textReport);
+    setCopiedDiagnostic(true);
+    setTimeout(() => setCopiedDiagnostic(false), 2500);
+  };
 
   const handleOpenGeneratedArticles = async (site: WordPressSite) => {
     setViewingArticlesSite(site);
@@ -1358,6 +1470,16 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
 
                     <button
                       type="button"
+                      onClick={() => handleOpenRemoteLogs(site)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 transition-colors shadow-2xs cursor-pointer"
+                      title="Verificar logs internos e diagnóstico em tempo real do plugin WordPress instalado no site"
+                    >
+                      <Terminal className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Logs do Plugin</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => handleTestPublishLatestArticle(site.id)}
                       disabled={testingId === site.id || testingPostSiteId === site.id}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 transition-colors disabled:opacity-50 cursor-pointer"
@@ -2276,6 +2398,327 @@ export function WordPressSitesView({ token }: WordPressSitesViewProps) {
                   Voltar para Lista
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remote Plugin Logs & Diagnosis Modal */}
+      {viewingLogsSite && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                  <Terminal className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-slate-900">
+                      Logs & Diagnóstico em Tempo Real
+                    </h2>
+                    <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                      {viewingLogsSite.siteName}
+                    </span>
+                  </div>
+                  <a
+                    href={viewingLogsSite.siteUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1 mt-0.5"
+                  >
+                    <span>{viewingLogsSite.siteUrl}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchRemoteLogs(viewingLogsSite.id)}
+                  disabled={loadingRemoteLogs}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
+                  title="Consultar novamente os logs em tempo real no WordPress"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingRemoteLogs ? 'animate-spin text-indigo-600' : ''}`} />
+                  <span>Atualizar</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopyDiagnosticReport}
+                  disabled={!remoteLogsData}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
+                  title="Copiar relatório estruturado para envio ao suporte"
+                >
+                  {copiedDiagnostic ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedDiagnostic ? 'Copiado!' : 'Copiar Diagnóstico'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setViewingLogsSite(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {loadingRemoteLogs && !remoteLogsData && (
+                <div className="p-12 flex flex-col items-center justify-center text-center space-y-3">
+                  <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
+                  <p className="text-sm font-semibold text-slate-700">
+                    Conectando ao WordPress de {viewingLogsSite.siteName} e consultando logs em tempo real...
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-sm">
+                    Requisitando diretamente via REST API segura com a chave de licença do site.
+                  </p>
+                </div>
+              )}
+
+              {/* Server Info Banner */}
+              {remoteLogsData?.server_info && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2.5 p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl text-xs">
+                  <div>
+                    <span className="text-slate-400 block text-[10px] font-semibold uppercase">Versão Plugin</span>
+                    <strong className="text-slate-800 font-mono">v{remoteLogsData.server_info.plugin_version || '1.3.0'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px] font-semibold uppercase">WordPress</span>
+                    <strong className="text-slate-800 font-mono">{remoteLogsData.server_info.wp_version || 'N/A'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px] font-semibold uppercase">PHP</span>
+                    <strong className="text-slate-800 font-mono">{remoteLogsData.server_info.php_version || 'N/A'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px] font-semibold uppercase">Permalinks</span>
+                    <strong className="text-slate-800 truncate block" title={remoteLogsData.server_info.permalink_structure}>
+                      {remoteLogsData.server_info.permalink_structure || 'Padrão'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px] font-semibold uppercase">Limite Memória</span>
+                    <strong className="text-slate-800 font-mono">{remoteLogsData.server_info.memory_limit || 'N/A'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px] font-semibold uppercase">Plugin SEO</span>
+                    <strong className="text-slate-800 truncate block" title={remoteLogsData.server_info.seo_plugin}>
+                      {remoteLogsData.server_info.seo_plugin || 'Nenhum'}
+                    </strong>
+                  </div>
+                </div>
+              )}
+
+              {/* Connection Failure Diagnosis Card */}
+              {remoteLogsData && !remoteLogsData.reachable && (
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs space-y-3">
+                  <div className="flex items-start gap-2.5 text-rose-900">
+                    <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-sm text-rose-950">
+                        {remoteLogsData.httpStatus ? `Falha de Comunicação com WordPress (HTTP ${remoteLogsData.httpStatus})` : 'Erro ao Contatar Servidor WordPress'}
+                      </h4>
+                      <p className="mt-1 text-rose-800">
+                        {remoteLogsData.diagnosis?.cause || remoteLogsData.error || 'A REST API do plugin não respondeu adequadamente.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {remoteLogsData.diagnosis?.actionable_steps && remoteLogsData.diagnosis.actionable_steps.length > 0 && (
+                    <div className="bg-white/80 p-3 rounded-lg border border-rose-200/60 space-y-1.5">
+                      <strong className="text-rose-950 block font-semibold">Instruções para Resolução:</strong>
+                      <ul className="space-y-1 text-rose-900">
+                        {remoteLogsData.diagnosis.actionable_steps.map((step: string, sIdx: number) => (
+                          <li key={sIdx} className="flex items-start gap-1.5">
+                            <span className="text-rose-600 font-bold">•</span>
+                            <span>{step}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Counters & Filter Bar */}
+              {remoteLogsData?.reachable && (
+                <div className="space-y-3">
+                  {/* Counts */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-center">
+                      <span className="text-xs text-slate-500 font-medium">Total de Eventos</span>
+                      <p className="text-lg font-bold text-slate-800 mt-0.5">{remoteLogsData.counts?.total ?? 0}</p>
+                    </div>
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
+                      <span className="text-xs text-emerald-700 font-medium">Sucessos</span>
+                      <p className="text-lg font-bold text-emerald-800 mt-0.5">{remoteLogsData.counts?.success ?? 0}</p>
+                    </div>
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-center">
+                      <span className="text-xs text-amber-700 font-medium">Avisos</span>
+                      <p className="text-lg font-bold text-amber-800 mt-0.5">{remoteLogsData.counts?.warning ?? 0}</p>
+                    </div>
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-center">
+                      <span className="text-xs text-rose-700 font-medium">Erros</span>
+                      <p className="text-lg font-bold text-rose-800 mt-0.5">{remoteLogsData.counts?.error ?? 0}</p>
+                    </div>
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      {['all', 'error', 'warning', 'success', 'info'].map((lvl) => {
+                        const labels: Record<string, string> = {
+                          all: 'Todos',
+                          error: 'Erros',
+                          warning: 'Avisos',
+                          success: 'Sucesso',
+                          info: 'Info',
+                        };
+                        const active = remoteLogFilterLevel === lvl;
+                        return (
+                          <button
+                            key={lvl}
+                            type="button"
+                            onClick={() => setRemoteLogFilterLevel(lvl)}
+                            className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                              active
+                                ? 'bg-indigo-600 text-white shadow-2xs'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {labels[lvl]}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={remoteLogSearch}
+                          onChange={(e) => setRemoteLogSearch(e.target.value)}
+                          placeholder="Filtrar por mensagem ou ação..."
+                          className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-1 focus:ring-indigo-500 w-56"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleClearRemoteLogs}
+                        disabled={clearingRemoteLogs}
+                        className="px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        title="Limpar todos os logs mantidos no banco do WordPress deste cliente"
+                      >
+                        {clearingRemoteLogs ? 'Limpando...' : 'Limpar Logs'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Logs List Table */}
+                  {(() => {
+                    const filteredLogs = (remoteLogsData.logs || []).filter((l: any) => {
+                      if (remoteLogFilterLevel !== 'all' && l.level !== remoteLogFilterLevel) return false;
+                      if (!remoteLogSearch) return true;
+                      const q = remoteLogSearch.toLowerCase();
+                      return (
+                        (l.action || '').toLowerCase().includes(q) ||
+                        (l.message || '').toLowerCase().includes(q) ||
+                        JSON.stringify(l.details || '').toLowerCase().includes(q)
+                      );
+                    });
+
+                    if (filteredLogs.length === 0) {
+                      return (
+                        <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs">
+                          Nenhum log encontrado para os filtros selecionados.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 bg-white">
+                        {filteredLogs.map((log: any, idx: number) => {
+                          const lvl = log.level || 'info';
+                          const isExpanded = expandedLogId === (log.id || String(idx));
+                          return (
+                            <div key={log.id || idx} className="p-3 text-xs hover:bg-slate-50/60 transition-colors">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-2.5">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 mt-0.5 ${
+                                      lvl === 'success'
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : lvl === 'error'
+                                        ? 'bg-rose-100 text-rose-800'
+                                        : lvl === 'warning'
+                                        ? 'bg-amber-100 text-amber-800'
+                                        : 'bg-sky-100 text-sky-800'
+                                    }`}
+                                  >
+                                    {lvl}
+                                  </span>
+
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <code className="font-semibold text-slate-800 font-mono text-[11px]">
+                                        {log.action}
+                                      </code>
+                                      <span className="text-[11px] text-slate-400">
+                                        {log.timestamp || log.timestamp_iso}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 text-slate-700 font-medium">{log.message}</p>
+                                  </div>
+                                </div>
+
+                                {log.details && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setExpandedLogId(isExpanded ? null : log.id || String(idx))}
+                                    className="text-indigo-600 hover:text-indigo-800 text-[11px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+                                  >
+                                    <span>{isExpanded ? 'Ocultar' : 'Detalhes'}</span>
+                                    {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                  </button>
+                                )}
+                              </div>
+
+                              {isExpanded && log.details && (
+                                <div className="mt-2.5 p-2.5 bg-slate-900 rounded-lg text-slate-100 text-[11px] font-mono overflow-x-auto">
+                                  <pre>{JSON.stringify(log.details, null, 2)}</pre>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Os logs são consultados diretamente na REST API do WordPress do cliente sob demanda.
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setViewingLogsSite(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Fechar
+              </button>
             </div>
           </div>
         </div>

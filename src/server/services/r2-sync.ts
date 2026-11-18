@@ -441,11 +441,6 @@ export async function generateContextualEditorialImage(
   }
 
   return null;
-  } catch (err: any) {
-    console.warn('[Fallback Image Generator] Falha ao gerar imagem editorial via IA:', err.message);
-  }
-
-  return null;
 }
 
 /**
