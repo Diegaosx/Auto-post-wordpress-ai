@@ -6,6 +6,7 @@ import {
   ensureImageMirroredToR2,
   generateContextualEditorialImage,
   uploadSiteArticlesFeedJson,
+  isForbiddenImageService,
 } from './r2-sync';
 
 export async function syncArticleToWordPress(
@@ -67,21 +68,31 @@ export async function syncArticleToWordPress(
   }
 
   // Prioridade B: Espelhar URL da matéria no Cloudflare R2 (URL aberta que o WordPress consegue baixar)
-  const candidateUrl = article.imageUrl || article.mediaData?.featuredImage?.url;
-  let mirror = await ensureImageMirroredToR2(candidateUrl || imageBase64, article.id, postTitle);
+  let candidateUrl = article.imageUrl || article.mediaData?.featuredImage?.url;
+  if (candidateUrl && isForbiddenImageService(candidateUrl)) {
+    console.warn(`[WordPress Sync] URL com marca d'água/proibida detectada (${candidateUrl}). Descartando completamente.`);
+    candidateUrl = undefined;
+    finalImageUrl = undefined;
+    imageBase64 = undefined;
+  }
 
-  // Prioridade C: Se o artigo não tinha imagem ou falhou o espelhamento, gera imagem editorial via IA
+  let mirror = null;
+  if (candidateUrl || imageBase64) {
+    mirror = await ensureImageMirroredToR2(candidateUrl || imageBase64, article.id, postTitle);
+  }
+
+  // Prioridade C: Se o artigo não tinha imagem ou falhou o espelhamento, gera imagem editorial via IA (Google Imagen 3 / Host Dedicado)
   if (!mirror && !candidateUrl) {
-    console.log(`[WordPress Sync] Artigo "${postTitle}" sem imagem de origem. Gerando foto editorial via IA...`);
+    console.log(`[WordPress Sync] Artigo "${postTitle}" sem imagem de origem. Gerando foto editorial via Google Imagen 3...`);
     mirror = await generateContextualEditorialImage(postTitle, article.id);
   }
 
-  if (mirror) {
+  if (mirror && !isForbiddenImageService(mirror.url)) {
     finalImageUrl = mirror.url;
     if (mirror.base64) {
       imageBase64 = mirror.base64;
     }
-  } else if (candidateUrl) {
+  } else if (candidateUrl && !isForbiddenImageService(candidateUrl)) {
     finalImageUrl = candidateUrl.trim();
   }
 
@@ -91,6 +102,13 @@ export async function syncArticleToWordPress(
   const imageTitle = featMeta?.title || postTitle;
   const imageCaption = featMeta?.caption || article.subtitle || postExcerpt.slice(0, 160);
   const imageDesc = postExcerpt;
+
+  const validPublicImage =
+    finalImageUrl && !isForbiddenImageService(finalImageUrl)
+      ? finalImageUrl
+      : article.imageUrl && !isForbiddenImageService(article.imageUrl)
+      ? article.imageUrl
+      : undefined;
 
   const payload = {
     article_id: article.id,
@@ -102,8 +120,8 @@ export async function syncArticleToWordPress(
     status: postStatus,
     categories: [categoryName],
     tags: article.aiSeoKeywords && article.aiSeoKeywords.length > 0 ? article.aiSeoKeywords : ['notícias', 'atualidades'],
-    image_url: finalImageUrl || article.imageUrl || undefined,
-    featured_image: finalImageUrl || article.imageUrl || undefined,
+    image_url: validPublicImage,
+    featured_image: validPublicImage,
     image_base64: imageBase64,
     image_alt: imageAlt,
     alt_text: imageAlt,

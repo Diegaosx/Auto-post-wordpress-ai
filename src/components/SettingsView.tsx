@@ -18,6 +18,7 @@ import {
   Terminal,
   Cloud,
   ExternalLink,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -80,6 +81,10 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     r2BucketName: '',
     r2PublicUrl: '',
     r2AutoSync: true,
+    imageProvider: 'google-imagen',
+    imageHostUrl: '',
+    imageHostApiKey: '',
+    imageHostModel: 'imagen-3.0-generate-002',
   });
 
   const [hasKeys, setHasKeys] = useState({
@@ -88,6 +93,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     llama: false,
     painelAgy: false,
     r2: false,
+    imageHost: false,
   });
 
   useEffect(() => {
@@ -134,6 +140,10 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           r2BucketName: data.r2BucketName || '',
           r2PublicUrl: data.r2PublicUrl || '',
           r2AutoSync: data.r2AutoSync ?? true,
+          imageProvider: data.imageProvider || 'google-imagen',
+          imageHostUrl: data.imageHostUrl || '',
+          imageHostApiKey: '',
+          imageHostModel: data.imageHostModel || 'imagen-3.0-generate-002',
         });
         setHasKeys({
           openRouter: Boolean(data.hasOpenRouterKey),
@@ -141,6 +151,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           llama: Boolean(data.hasLlamaKey),
           painelAgy: Boolean(data.hasMcpAgyToken),
           r2: Boolean(data.hasR2Configured),
+          imageHost: Boolean(data.hasImageHostKey),
         });
         setSelectedAiTab(activeProv);
       }
@@ -162,6 +173,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
       if (!payload.geminiApiKey) delete payload.geminiApiKey;
       if (!payload.llamaApiKey) delete payload.llamaApiKey;
       if (!payload.mcpAgyToken) delete payload.mcpAgyToken;
+      if (!payload.imageHostApiKey) delete payload.imageHostApiKey;
       if (!payload.r2SecretAccessKey) delete payload.r2SecretAccessKey;
 
       const res = await fetch('/api/settings', {
@@ -1205,6 +1217,177 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                 placeholder="Insira as regras editoriais para a IA..."
               />
             </div>
+          </div>
+        </div>
+
+        {/* SEÇÃO: MOTOR & HOST DEDICADO DE GERAÇÃO DE IMAGENS (GOOGLE IMAGEN 3) */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-purple-600" />
+              <h2 className="text-sm font-semibold text-slate-900">Motor de Geração de Imagens & Host Dedicado</h2>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-purple-600" /> Google Imagen 3 (DeepMind)
+            </span>
+          </div>
+
+          <div className="p-5 space-y-4">
+            {/* Aviso de Regra Mandatória */}
+            <div className="p-3 bg-purple-50/50 rounded-lg border border-purple-200/60 text-xs text-purple-950 flex items-start gap-2.5">
+              <Shield className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-semibold">Regra Mandatória de Qualidade & Anti-Plágio:</span>{' '}
+                Para matérias sem foto de origem ou que necessitem de recriação visual, o sistema utiliza exclusivamente o fotorrealismo do{' '}
+                <strong>Google Imagen 3 (DeepMind)</strong> ou um <strong>Host Dedicado</strong> homologado. É terminantemente bloqueado o uso de geradores de terceiros com marca d'água (como pollinations.ai, unsplash ou pexels).
+              </div>
+            </div>
+
+            {/* Seleção do Provedor de Imagem */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-800 mb-2">
+                Provedor de Imagem para Matérias (Fallback & Imagens Inéditas)
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Opção 1: Google Imagen 3 Nativo */}
+                <div
+                  onClick={() => setForm({ ...form, imageProvider: 'google-imagen' })}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    (form.imageProvider || 'google-imagen') === 'google-imagen'
+                      ? 'border-purple-600 bg-purple-50/50 ring-1 ring-purple-600 shadow-xs'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                        Google Imagen 3
+                      </span>
+                      {(form.imageProvider || 'google-imagen') === 'google-imagen' && (
+                        <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold border border-purple-300 shadow-xs">
+                          Ativo
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Utiliza o modelo oficial da DeepMind via API Gemini (imagen-3.0-generate-002) em 16:9 4k fotorrealista.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Opção 2: Host Dedicado Customizado */}
+                <div
+                  onClick={() => setForm({ ...form, imageProvider: 'custom-host' })}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    form.imageProvider === 'custom-host'
+                      ? 'border-purple-600 bg-purple-50/50 ring-1 ring-purple-600 shadow-xs'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-purple-600" />
+                        Host Dedicado de Imagens
+                      </span>
+                      {form.imageProvider === 'custom-host' && (
+                        <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold border border-purple-300 shadow-xs">
+                          Ativo
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Conecta a um endpoint REST próprio de geração de fotos (VPS dedicado, RunPod, ComfyUI ou microserviço).
+                    </p>
+                  </div>
+                </div>
+
+                {/* Opção 3: Sem Geração (Publicar sem imagem) */}
+                <div
+                  onClick={() => setForm({ ...form, imageProvider: 'disabled' })}
+                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                    form.imageProvider === 'disabled'
+                      ? 'border-purple-600 bg-purple-50/50 ring-1 ring-purple-600 shadow-xs'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-slate-500" />
+                        Publicar Sem Foto
+                      </span>
+                      {form.imageProvider === 'disabled' && (
+                        <span className="text-[10px] bg-slate-100 text-slate-800 px-2 py-0.5 rounded-full font-bold border border-slate-300 shadow-xs">
+                          Ativo
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Caso o artigo original não tenha foto, publica a matéria sem imagem destacada. Zero uso de geradores externos.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Configurações do Host Dedicado de Imagens */}
+            {form.imageProvider === 'custom-host' && (
+              <div className="p-4 bg-purple-50/30 rounded-lg border border-purple-100 space-y-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-purple-950 pb-2 border-b border-purple-100">
+                  <Key className="w-3.5 h-3.5 text-purple-600" />
+                  Parâmetros de Conexão com o Host Dedicado
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      URL Endpoint do Host de Imagens
+                    </label>
+                    <input
+                      type="text"
+                      value={form.imageHostUrl || ''}
+                      onChange={(e) => setForm({ ...form, imageHostUrl: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-purple-500"
+                      placeholder="https://seu-servidor-imagens.com/api/generate"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Endpoint POST que recebe {'{ prompt, aspectRatio, title }'} e retorna a imagem ou base64.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Chave / Token de Autenticação ({hasKeys.imageHost ? 'Configurada no Servidor ✓' : 'Opcional'})
+                    </label>
+                    <input
+                      type="password"
+                      value={form.imageHostApiKey || ''}
+                      onChange={(e) => setForm({ ...form, imageHostApiKey: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-purple-500"
+                      placeholder={hasKeys.imageHost ? '•••••••••••••••••••••••• (deixe vazio para manter)' : 'Bearer token ou API key'}
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Enviado no header Authorization: Bearer {'<token>'}.
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                    Nome do Modelo no Host
+                  </label>
+                  <input
+                    type="text"
+                    value={form.imageHostModel || ''}
+                    onChange={(e) => setForm({ ...form, imageHostModel: e.target.value })}
+                    className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
+                    placeholder="imagen-3.0-generate-002"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

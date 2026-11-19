@@ -269,6 +269,12 @@ export interface SystemSettings {
   mcpImageStrategy?: 'temporal_advance' | 'content_concept';
   mcpTimeoutSeconds?: number;
 
+  // 2.2 Provedor / Host Dedicado de Geração de Imagens (para OpenRouter, Gemini, Groq ou Fallback)
+  imageProvider?: 'disabled' | 'google-imagen' | 'custom-host';
+  imageHostUrl?: string;
+  imageHostApiKey?: string;
+  imageHostModel?: string;
+
   aiTemperature: number;
   aiSystemPrompt: string;
 

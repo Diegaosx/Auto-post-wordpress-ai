@@ -294,6 +294,14 @@ export async function uploadImageBufferToR2(
 }
 
 /**
+ * Bloqueio absoluto de serviços de imagens com marca d'água
+ */
+export function isForbiddenImageService(url: string | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  return /(?:pollinations|image\.pollinations\.ai|unsplash\.com|pexels\.com)/i.test(url);
+}
+
+/**
  * Garante que a imagem do artigo esteja espelhada e acessível no Cloudflare R2
  * Permite que qualquer WordPress faça download_url sem bloqueios de CDN ou WAF externo
  */
@@ -303,6 +311,12 @@ export async function ensureImageMirroredToR2(
   slugTitle: string = 'destaque'
 ): Promise<{ url: string; base64?: string } | null> {
   if (!imageUrlOrBase64 || !imageUrlOrBase64.trim()) return null;
+
+  // Bloqueio rigoroso de pollinations e marcas d'água
+  if (isForbiddenImageService(imageUrlOrBase64)) {
+    console.warn('[R2 Mirror] 🚫 Imagem com marca d\'água (pollinations/unsplash) BLOQUEADA terminantemente:', imageUrlOrBase64);
+    return null;
+  }
 
   const config = await getR2Config();
   const input = imageUrlOrBase64.trim();
@@ -382,9 +396,12 @@ export async function ensureImageMirroredToR2(
 }
 
 /**
- * Gera uma imagem editorial de fallback profissional via Google Imagen 3 (DeepMind)
- * caso o artigo original não possua imagem ou ela tenha falhado.
- * PROIBIÇÃO ABSOLUTA: Nunca utilizar pollinations.ai, unsplash ou serviços com marca d'água.
+ * Gera uma imagem editorial de alta definição profissional via Google Imagen 3 (DeepMind)
+ * ou Host Dedicado de Imagens customizado, caso o artigo original não possua imagem.
+ *
+ * REGRA MANDATÓRIA E INVIOLÁVEL:
+ * É TERMINANTEMENTE PROIBIDO utilizar pollinations.ai, unsplash ou serviços com marca d'água.
+ * Se a geração falhar, o artigo é publicado SEM imagem destacada. NUNCA usar pollinations!
  */
 export async function generateContextualEditorialImage(
   title: string,
@@ -394,50 +411,113 @@ export async function generateContextualEditorialImage(
     const cleanPrompt = title
       .replace(/[^\w\s\u00C0-\u00FF]/gi, ' ')
       .trim()
-      .slice(0, 120);
+      .slice(0, 140);
 
     const settings = dbRepo.getSystemSettings();
-    const geminiKey = process.env.GEMINI_API_KEY || (settings as any).geminiApiKey;
+    const promptText = `${cleanPrompt}, editorial photojournalism, high quality 4k sharp focus, modern authentic photography, horizontal landscape 16:9, natural lighting, cinematic lighting, no text, no watermark`;
 
-    if (!geminiKey) {
-      console.warn('[Fallback Image Generator] Nenhuma chave Gemini configurada para o Google Imagen 3. Ignorando fallback para evitar marcas d\'água.');
-      return null;
-    }
-
-    const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${geminiKey}`;
-    const promptText = `${cleanPrompt}, editorial photojournalism, high quality 4k sharp focus, modern authentic photography, horizontal landscape 16:9, natural lighting, no text, no watermark`;
-
-    const res = await fetch(imagenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        instances: [{ prompt: promptText }],
-        parameters: {
-          sampleCount: 1,
-          aspectRatio: '16:9',
-          outputMimeType: 'image/jpeg'
+    // ── ROTA A: Host Dedicado de Geração de Imagens (Custom Host) ─────────────
+    if (settings.imageHostUrl && settings.imageHostUrl.trim()) {
+      try {
+        console.log(`[Image Generator] Enviando prompt para o Host Dedicado de Imagens: ${settings.imageHostUrl}`);
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (settings.imageHostApiKey) {
+          headers['Authorization'] = `Bearer ${settings.imageHostApiKey}`;
         }
-      }),
-      signal: AbortSignal.timeout(25000)
-    });
 
-    if (res.ok) {
-      const data: any = await res.json();
-      const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
-      if (base64Bytes) {
-        const buffer = Buffer.from(base64Bytes, 'base64');
-        const filenameKey = `${articleId}-imagen3.jpg`;
-        const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
-        if (r2Url) {
-          return {
-            url: r2Url,
-            base64: `data:image/jpeg;base64,${base64Bytes}`
-          };
+        const hostRes = await fetch(settings.imageHostUrl.trim(), {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            prompt: promptText,
+            aspectRatio: '16:9',
+            title: cleanPrompt,
+            model: settings.imageHostModel || 'imagen-3.0-generate-002'
+          }),
+          signal: AbortSignal.timeout(35000)
+        });
+
+        if (hostRes.ok) {
+          const contentType = hostRes.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const hostData: any = await hostRes.json();
+            const b64 = hostData.b64 || hostData.base64 || hostData.image || hostData.data?.[0]?.b64_json;
+            const externalUrl = hostData.url || hostData.imageUrl;
+
+            if (b64) {
+              const buffer = Buffer.from(b64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+              const filenameKey = `${articleId}-customhost.jpg`;
+              const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
+              if (r2Url) {
+                console.log(`[Image Generator] Imagem gerada pelo Host Dedicado espelhada com sucesso no R2: ${r2Url}`);
+                return { url: r2Url, base64: `data:image/jpeg;base64,${b64}` };
+              }
+            } else if (externalUrl && !isForbiddenImageService(externalUrl)) {
+              const mirrored = await ensureImageMirroredToR2(externalUrl, articleId, cleanPrompt);
+              if (mirrored) return mirrored;
+            }
+          } else if (contentType.startsWith('image/')) {
+            const arrayBuf = await hostRes.arrayBuffer();
+            const buffer = Buffer.from(arrayBuf);
+            const filenameKey = `${articleId}-customhost.jpg`;
+            const r2Url = await uploadImageBufferToR2(buffer, filenameKey, contentType);
+            if (r2Url) {
+              return { url: r2Url, base64: `data:${contentType};base64,${buffer.toString('base64')}` };
+            }
+          }
+        } else {
+          console.warn(`[Image Generator] Host Dedicado retornou HTTP ${hostRes.status}`);
         }
+      } catch (hostErr: any) {
+        console.warn(`[Image Generator] Erro ao comunicar com Host Dedicado:`, hostErr.message);
       }
     }
+
+    // ── ROTA B: Google Imagen 3 nativo via Gemini API Key ─────────────────────
+    const geminiKey = process.env.GEMINI_API_KEY || (settings as any).geminiApiKey;
+    if (geminiKey && geminiKey !== 'MY_GEMINI_API_KEY') {
+      try {
+        console.log(`[Image Generator] Gerando fotografia via Google Imagen 3 oficial (DeepMind)...`);
+        const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${geminiKey}`;
+
+        const res = await fetch(imagenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instances: [{ prompt: promptText }],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: '16:9',
+              outputMimeType: 'image/jpeg'
+            }
+          }),
+          signal: AbortSignal.timeout(25000)
+        });
+
+        if (res.ok) {
+          const data: any = await res.json();
+          const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
+          if (base64Bytes) {
+            const buffer = Buffer.from(base64Bytes, 'base64');
+            const filenameKey = `${articleId}-imagen3.jpg`;
+            const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
+            if (r2Url) {
+              console.log(`[Image Generator] Foto Google Imagen 3 gerada e salva no R2: ${r2Url}`);
+              return {
+                url: r2Url,
+                base64: `data:image/jpeg;base64,${base64Bytes}`
+              };
+            }
+          }
+        }
+      } catch (geminiErr: any) {
+        console.warn('[Image Generator] Falha ao gerar via Google Imagen 3:', geminiErr.message);
+      }
+    }
+
+    console.log('[Image Generator] Nenhuma chave/host de imagem disponível ou geração falhou. Publicando artigo SEM imagem destacada (Proibição Total de Pollinations).');
   } catch (err: any) {
-    console.warn('[Fallback Image Generator] Falha ao gerar imagem editorial via Google Imagen 3:', err.message);
+    console.warn('[Image Generator] Erro geral na geração editorial:', err.message);
   }
 
   return null;

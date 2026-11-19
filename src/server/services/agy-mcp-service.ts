@@ -4,6 +4,7 @@ import { URL } from 'url';
 import { CapturedArticle, WordPressSite } from '../../shared/types';
 import { env } from '../config/env';
 import { parseRobustArticleJson, sanitizeArticleHtmlForPublish } from './article-cleaner';
+import { isForbiddenImageService, generateContextualEditorialImage } from './r2-sync';
 
 export interface McpTestResult {
   success: boolean;
@@ -315,30 +316,32 @@ export async function executeMcpAgyRewrite(options: McpRewriteOptions): Promise<
   const originalRefImage = article.imageUrl || '';
   const baseContent = (article.cleanText || article.originalContent || '').slice(0, 4500);
 
-  // 1. Montagem da Diretriz de Imagem Inédita Anti-Plágio (com ou sem foto na fonte)
+  // 1. Montagem da Diretriz de Imagem Inédita Anti-Plágio (Google Imagen 3 DeepMind Exclusivo)
   let imageDirectivePrompt = '';
   if (hasOriginalImage) {
     if (imageStrategy === 'temporal_advance') {
-      imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: AVANÇO TEMPORAL & CONTINUIDADE VISUAL (ANTI-PLÁGIO)]:
+      imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: AVANÇO TEMPORAL & CONTINUIDADE VISUAL (GOOGLE IMAGEN 3)]:
 1. A matéria original continha a imagem de referência: "${originalRefImage}".
 2. É ESTRITAMENTE PROIBIDO usar a imagem original diretamente para eliminar 100% dos riscos de plágio ou notificação autoral.
-3. Você DEVE acionar IMEDIATAMENTE a ferramenta nativa 'generate_image' com AspectRatio='16:9' e Prompt fotográfico fotorrealista hiperdetalhado (8k, Google Imagen 3 DeepMind).
-4. CONCEITO DO AVANÇO TEMPORAL: Projete a cena alguns segundos ou instantes à frente no tempo em relação à imagem original. Simule a continuação natural da narrativa visual (ex: pessoas em movimento ou comemoração, novo ângulo dinâmico, iluminação de alto padrão fotojornalístico).
-5. NUNCA responda apenas dizendo que a imagem será gerada: chame agora mesmo a ferramenta 'generate_image'.`;
+3. É TERMINANTEMENTE PROIBIDO usar pollinations.ai, image.pollinations.ai ou qualquer gerador de terceiros com marca d'água.
+4. Você DEVE acionar o subagente nativo 'image-generator' (invocando invoke_subagent com TypeName='image-generator', Role='Image Generator', Prompt=...) para gerar uma imagem fotográfica fotorrealista hiperdetalhada (8k, horizontal 16:9, Google Imagen 3 DeepMind).
+5. CONCEITO DO AVANÇO TEMPORAL: Projete a cena alguns segundos ou instantes à frente no tempo em relação à imagem original. Simule a continuação natural da narrativa visual (ex: pessoas em movimento, novo ângulo dinâmico, iluminação de alto padrão fotojornalístico).
+6. Caso não consiga chamar o subagente, forneça a descrição fotográfica exata no campo "image_prompt" do JSON.`;
     } else {
-      imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO CONCEITUAL EDITORIAL]:
+      imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO CONCEITUAL EDITORIAL (GOOGLE IMAGEN 3)]:
 1. É ESTRITAMENTE PROIBIDO usar a imagem original diretamente.
-2. Você DEVE acionar IMEDIATAMENTE a ferramenta nativa 'generate_image' com AspectRatio='16:9' para criar uma NOVA fotografia profissional em alta resolução (8k, realismo fotográfico jornalístico, Google Imagen 3 DeepMind).
-3. A imagem deve traduzir com precisão e beleza estética o tema central da notícia e as palavras-chave principais.
-4. NUNCA responda apenas dizendo que a imagem será gerada: chame agora mesmo a ferramenta 'generate_image'.`;
+2. É TERMINANTEMENTE PROIBIDO usar pollinations.ai, image.pollinations.ai ou qualquer gerador com marca d'água.
+3. Você DEVE acionar o subagente nativo 'image-generator' (usando invoke_subagent com TypeName='image-generator', Role='Image Generator', Prompt=...) para criar uma NOVA fotografia profissional em alta resolução (8k, horizontal 16:9, realismo fotográfico jornalístico, Google Imagen 3 DeepMind).
+4. A imagem deve traduzir com precisão e beleza estética o tema central da notícia e as palavras-chave principais.
+5. Caso não consiga chamar o subagente, forneça a descrição fotográfica no campo "image_prompt" do JSON.`;
     }
   } else {
-    imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO FOTOGRÁFICA DO ZERO (FONTE ORIGINAL SEM FOTO)]:
-1. ATENÇÃO CRÍTICA: A matéria original NÃO POSSUI FOTO DE DESTAQUE ('Sem Foto').
-2. NENHUM artigo publicado no portal pode ficar sem imagem de destaque!
-3. Você DEVE acionar OBRIGATORIAMENTE e IMEDIATAMENTE a ferramenta nativa 'generate_image' com AspectRatio='16:9' para criar uma fotografia editorial inédita de alto impacto e ultra-realismo (8k, Google Imagen 3 DeepMind).
+    imageDirectivePrompt = `[DIRETRIZ MANDATÓRIA DE IMAGEM: CRIAÇÃO FOTOGRÁFICA DO ZERO (GOOGLE IMAGEN 3)]:
+1. ATENÇÃO: A matéria original NÃO POSSUI FOTO DE DESTAQUE ('Sem Foto').
+2. É TERMINANTEMENTE PROIBIDO usar pollinations.ai ou qualquer serviço externo com marca d'água.
+3. Você DEVE acionar o subagente nativo 'image-generator' (usando invoke_subagent com TypeName='image-generator', Role='Image Generator', Prompt=...) para criar uma fotografia editorial inédita de alto impacto (8k, horizontal 16:9, Google Imagen 3 DeepMind).
 4. Crie um prompt de imagem fotográfica hiper-realista retratando com fidelidade o contexto central, as figuras públicas citadas, o ambiente institucional ou a cena da reportagem.
-5. NUNCA responda apenas dizendo que a imagem será gerada: chame agora mesmo a ferramenta 'generate_image'.`;
+5. Caso não consiga chamar o subagente, forneça a descrição fotográfica no campo "image_prompt" do JSON.`;
   }
 
   // 2. Diretrizes Exclusivas do Site com PRIORIDADE MÁXIMA
@@ -608,11 +611,15 @@ async function processMcpResponse(
     }
   }
 
-  // 3. Validação Ativa e Download do Buffer da Imagem
+  // 3. Validação Ativa e Download do Buffer da Imagem (Exclusivo Google Imagen 3)
   let validatedImageUrl: string | null = null;
   let validatedBase64: string | undefined = undefined;
 
   for (const candidate of imageCandidates) {
+    if (isForbiddenImageService(candidate)) {
+      console.warn(`[MCP AGY] Descartando candidato com marca d'água/proibido: ${candidate}`);
+      continue;
+    }
     const check = await fetchAndValidateImage(candidate);
     if (check.valid && check.buffer && check.contentType) {
       validatedImageUrl = check.finalUrl || candidate;
@@ -622,14 +629,29 @@ async function processMcpResponse(
     }
   }
 
-  // Fallback: Se nenhuma imagem gerada foi validada e a matéria original tinha foto, valida a original
-  if (!validatedImageUrl && article.imageUrl) {
+  // Fallback 1: Se o artigo original já possuía uma foto legítima sem marca d'água
+  if (!validatedImageUrl && article.imageUrl && !isForbiddenImageService(article.imageUrl)) {
     const origCheck = await fetchAndValidateImage(article.imageUrl);
     if (origCheck.valid && origCheck.buffer && origCheck.contentType) {
       validatedImageUrl = origCheck.finalUrl || normalizeImageUrl(article.imageUrl);
       validatedBase64 = `data:${origCheck.contentType};base64,${origCheck.buffer.toString('base64')}`;
     } else {
       validatedImageUrl = normalizeImageUrl(article.imageUrl);
+    }
+  }
+
+  // Fallback 2: Se nenhuma imagem válida foi obtida, gera foto editorial inédita via Google Imagen 3 nativo
+  if (!validatedImageUrl) {
+    console.log(`[MCP AGY] Nenhuma imagem válida retornada pelo agente. Solicitando geração editorial via Google Imagen 3...`);
+    try {
+      const generated = await generateContextualEditorialImage(parsedArticle.title || article.originalTitle, article.id);
+      if (generated && !isForbiddenImageService(generated.url)) {
+        validatedImageUrl = generated.url;
+        validatedBase64 = generated.base64;
+        console.log(`[MCP AGY] Imagem Google Imagen 3 gerada e associada com sucesso: ${validatedImageUrl}`);
+      }
+    } catch (genErr: any) {
+      console.warn('[MCP AGY] Falha na geração contextual de imagem:', genErr.message);
     }
   }
 

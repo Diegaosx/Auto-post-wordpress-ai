@@ -5,7 +5,7 @@ import { executeLlmPrompt } from './llm-gateway';
 import { CapturedArticle, NewsSource, ArticleRewriteOptions, LLMProviderId } from '../../shared/types';
 import { syncArticleToWordPress } from './wordpress-sync';
 import { extractArticle } from './article-extractor';
-import { uploadArticleJson, uploadFeedJson } from './r2-sync';
+import { uploadArticleJson, uploadFeedJson, generateContextualEditorialImage, isForbiddenImageService } from './r2-sync';
 import { executeMcpAgyRewrite } from './agy-mcp-service';
 import { parseRobustArticleJson, sanitizeArticleHtmlForPublish } from './article-cleaner';
 
@@ -459,23 +459,58 @@ export async function rewriteArticleWithAi(
     }
   }
 
-  let systemPrompt = settings.aiSystemPrompt || `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
-Sua missão é transformar a notícia original em uma reportagem 100% autoral, informativa, envolvente e otimizada para os mecanismos de busca.
-REGRAS OBRIGATÓRIAS:
-1. NUNCA faça cópia literal (evite plágio). Reescreva do zero trazendo clareza, contexto e dados.
-2. O conteúdo DEVE estar em HTML limpo, usando títulos <h2>, subtítulos <h3>, parágrafos <p> bem elaborados e listas <ul><li> com os pontos-chave quando relevante.
-3. Não inclua tags de documento como <html>, <body>, <head> ou <!DOCTYPE>.
-4. Crie um Título cativante e forte para atrair leitores (sem ser sensacionalista falso).
-5. Gere uma Meta Descrição (resumo de até 160 caracteres com gatilho de clique).
-6. Gere de 3 a 6 tags/palavras-chave estratégicas.
-7. Responda ESTRITAMENTE em formato JSON com as chaves:
-   - "title": string
-   - "content": string (HTML formatado)
-   - "excerpt": string (até 160 caracteres)
-   - "keywords": string[] (array de strings)
-Não inclua nenhuma outra palavra ou markdown fora do JSON.`;
-
+  let customSiteInstructions = '';
   if (targetSite?.aiCustomInstructions && targetSite.aiCustomInstructions.trim()) {
+    customSiteInstructions = `
+======================================================================
+[DIRETRIZES EDITORIAIS MANDATÓRIAS DO SITE "${targetSite.siteName}"]:
+ATENÇÃO PRIORITÁRIA: Este portal possui regras editoriais exclusivas definidas pelo proprietário do site. Você DEVE seguir CADA UMA DELAS com a mais alta prioridade:
+>>> ${targetSite.aiCustomInstructions.trim()} <<<
+
+COMO APLICAR ESSAS DIRETRIZES NO ARTIGO:
+- Se solicitar TOM DESCONTRAÍDO, JOVEM OU DINÂMICO: adote um tom leve, engajador e ágil, com estilo de internet conectado ao público leitor.
+- Se solicitar RESUMO EM TÓPICOS: inclua obrigatoriamente logo após a introdução uma seção <h2>Resumo da Notícia</h2> ou <h2>Destaques Rápidos</h2> com <ul><li>...</li></ul> resumindo os pontos fundamentais.
+- Se solicitar CHAMADA PARA DEBATE NOS COMENTÁRIOS: o artigo DEVE OBRIGATORIAMENTE terminar com um subtítulo (ex: <h2>Participe do Debate</h2> ou <h2>E você, o que achou?</h2>) e parágrafo instigando os leitores a responderem e debaterem na seção de comentários do site.
+- Se solicitar FOCO EM SEO ON-PAGE: construa subtítulos semânticos <h2> e <h3> com palavras-chave de cauda longa e termos de busca orgânica.
+======================================================================
+`;
+  }
+
+  let systemPrompt = settings.aiSystemPrompt || `Você é um jornalista sênior, editor-chefe investigativo e especialista em SEO On-Page para WordPress.
+Sua missão é transformar a notícia original abaixo em uma reportagem 100% autoral, aprofundada, envolvente e perfeitamente formatada para publicação imediata no portal.
+
+${customSiteInstructions}
+
+[REGRA SUPREMA E INVIOLÁVEL: REESCRITA 100% AUTORAL - ZERO PLÁGIO]
+1. É TERMINANTEMENTE PROIBIDO copiar e colar frases, trechos ou períodos literais da matéria original.
+2. Você é o autor desta nova reportagem. Reescreva tudo com seu próprio vocabulário jornalístico, estilo, ritmo e estruturação de texto.
+3. Mantenha 100% de precisão e fidelidade aos FATOS, NOMES DE PESSOAS, LOCAIS, DATAS, HORÁRIOS, NÚMEROS e DADOS TÉCNICOS.
+4. Qualquer ferramenta de detecção de plágio deve atestar 100% de originalidade textual.
+
+[ESTRUTURA TÉCNICA DO ARTIGO]:
+1. Formate o corpo do artigo ESTRITAMENTE em HTML limpo, usando <h2>, <h3>, parágrafos <p> ricos e listas <ul><li> quando relevante.
+2. Não inclua tags de documento como <html>, <head>, <body> ou <!DOCTYPE>.
+3. Crie um Título impactante com alto gatilho de leitura (CTR) sem sensacionalismo falso.
+4. Crie um Excerpt / Meta Descrição de até 160 caracteres com excelente gancho editorial.
+5. Forneça de 4 a 8 palavras-chave/tags de SEO estratégicas.
+6. Forneça o Alt Text (para acessibilidade da imagem), Título SEO e Legenda Jornalística descritiva para a fotografia editorial.
+
+[FORMATO DE SAÍDA OBRIGATÓRIO E REGRAS DE JSON]:
+Responda EXCLUSIVAMENTE em formato JSON com a seguinte estrutura:
+\`\`\`json
+{
+  "title": "Título Marcante e Otimizado",
+  "content": "<h2>Subtítulo Semântico</h2><p>Parágrafo autoral...</p>",
+  "excerpt": "Meta descrição de até 160 caracteres com alto CTR...",
+  "keywords": ["tag1", "tag2", "tag3", "tag4"],
+  "image_alt": "Texto alternativo descritivo da imagem",
+  "image_caption": "Legenda editorial jornalística",
+  "image_title": "Título SEO da fotografia"
+}
+\`\`\`
+PROIBIÇÃO ABSOLUTA: NÃO inclua absolutamente NENHUM texto, comentário ou relatório fora do bloco JSON. Todo o conteúdo em "content" deve ser HTML puro.`;
+
+  if (targetSite?.aiCustomInstructions && targetSite.aiCustomInstructions.trim() && !systemPrompt.includes(targetSite.aiCustomInstructions.trim())) {
     systemPrompt += `\n\nDIRETRIZES EDITORIAIS EXCLUSIVAS PARA O SITE "${targetSite.siteName}":\n${targetSite.aiCustomInstructions.trim()}\n(IMPORTANTE: Aplique com prioridade máxima estas diretrizes acima ao recriar o artigo para este site)`;
   }
 
@@ -500,13 +535,47 @@ Por favor, reescreva em português com padrão editorial profissional e otimizad
 
     const parsed = parseRobustArticleJson(aiResult.output, article);
 
-    let updated = dbRepo.updateCapturedArticle(articleId, {
+    const articleUpdates: Partial<CapturedArticle> = {
       status: 'ready',
       aiTitle: parsed.title || article.originalTitle,
       aiContent: sanitizeArticleHtmlForPublish(parsed.content || article.originalContent),
       aiExcerpt: parsed.excerpt || article.originalExcerpt,
       aiSeoKeywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
-    });
+    };
+
+    // Resolução de Imagem: Se a original não existe ou é inválida/proibida, gera via Google Imagen 3 / Host Dedicado
+    let finalImageUrl: string | undefined = undefined;
+    let finalBase64: string | undefined = undefined;
+
+    if (article.imageUrl && !isForbiddenImageService(article.imageUrl)) {
+      finalImageUrl = article.imageUrl;
+    } else {
+      console.log(`[Scraper AI] Artigo "${parsed.title || article.originalTitle}" sem foto. Solicitando geração editorial via Google Imagen 3...`);
+      try {
+        const generated = await generateContextualEditorialImage(parsed.title || article.originalTitle, articleId);
+        if (generated && !isForbiddenImageService(generated.url)) {
+          finalImageUrl = generated.url;
+          finalBase64 = generated.base64;
+        }
+      } catch (imgErr: any) {
+        console.warn(`[Scraper AI] Falha ao gerar imagem contextual: ${imgErr.message}. Publicando sem imagem.`);
+      }
+    }
+
+    if (finalImageUrl) {
+      articleUpdates.imageUrl = finalImageUrl;
+      articleUpdates.mediaData = {
+        featuredImage: {
+          url: finalImageUrl,
+          title: parsed.image_title || parsed.title || article.originalTitle,
+          alt: parsed.image_alt || parsed.title || article.originalTitle,
+          caption: parsed.image_caption || parsed.excerpt || '',
+          base64: finalBase64,
+        },
+      };
+    }
+
+    let updated = dbRepo.updateCapturedArticle(articleId, articleUpdates);
 
     if (!updated) {
       throw new Error('Falha ao salvar artigo reescrito.');

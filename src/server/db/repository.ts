@@ -67,6 +67,10 @@ const DEFAULT_SETTINGS: SystemSettings = {
   mcpAgyModel: env.MCP_AGY_MODEL || 'gemini-3.8-flash',
   mcpImageStrategy: (env.MCP_IMAGE_STRATEGY as any) || 'temporal_advance',
   mcpTimeoutSeconds: 300,
+  imageProvider: 'google-imagen',
+  imageHostUrl: '',
+  imageHostApiKey: '',
+  imageHostModel: 'imagen-3.0-generate-002',
   aiTemperature: 0.7,
   aiSystemPrompt: `Você é um jornalista sênior, editor-chefe e especialista em SEO para WordPress.
 Sua missão é transformar a notícia original em uma reportagem 100% autoral, informativa, envolvente e otimizada para os mecanismos de busca.

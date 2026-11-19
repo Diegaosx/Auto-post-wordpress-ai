@@ -1999,6 +1999,7 @@ async function startServer() {
       hasGeminiKey: Boolean(raw.geminiApiKey),
       hasLlamaKey: Boolean(raw.llamaApiKey),
       hasMcpAgyToken: Boolean(raw.mcpAgyToken),
+      hasImageHostKey: Boolean(raw.imageHostApiKey),
       hasR2Configured: Boolean(raw.r2AccountId && raw.r2AccessKeyId && raw.r2SecretAccessKey),
     });
   });
@@ -2018,6 +2019,9 @@ async function startServer() {
     }
     if (updates.mcpAgyToken === '' && current.mcpAgyToken) {
       delete updates.mcpAgyToken;
+    }
+    if (updates.imageHostApiKey === '' && current.imageHostApiKey) {
+      delete updates.imageHostApiKey;
     }
     if (updates.r2SecretAccessKey === '' && current.r2SecretAccessKey) {
       delete updates.r2SecretAccessKey;
