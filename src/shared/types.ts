@@ -253,13 +253,16 @@ export interface SystemSettings {
   openRouterApiKey?: string;
   openRouterModel: string;
   openRouterBaseUrl?: string;
+  openRouterImageModel?: string;
 
   geminiApiKey?: string;
   geminiModel: string;
+  geminiImageModel?: string;
 
   llamaApiKey?: string;
   llamaBaseUrl?: string;
   llamaModel?: string;
+  llamaImageModel?: string;
 
   // 2.1 Painel AGY / Cluster Antigravity (MCP Server)
   mcpAgyUrl?: string;

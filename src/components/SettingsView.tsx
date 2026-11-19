@@ -50,6 +50,11 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
 
   const [selectedAiTab, setSelectedAiTab] = useState<LLMProviderId>('openrouter');
 
+  const switchAiTab = (tab: LLMProviderId) => {
+    setSelectedAiTab(tab);
+    setTestResult(null);
+  };
+
   const [form, setForm] = useState<SystemSettings>({
     platformName: 'Auto Post WordPress AI',
     platformTagline: 'Automação editorial com IA e sincronização WordPress',
@@ -60,11 +65,14 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     openRouterApiKey: '',
     openRouterModel: 'openai/gpt-4o-mini',
     openRouterBaseUrl: 'https://openrouter.ai/api/v1',
+    openRouterImageModel: 'google/imagen-3',
     geminiApiKey: '',
     geminiModel: 'gemini-2.5-flash',
+    geminiImageModel: 'imagen-3.0-generate-002',
     llamaApiKey: '',
     llamaBaseUrl: 'https://api.groq.com/openai/v1',
     llamaModel: 'llama-3.3-70b-versatile',
+    llamaImageModel: '',
     mcpAgyUrl: 'https://backend-agy.saletub.com/mcp',
     mcpAgyToken: '',
     mcpAgyModel: 'gemini-3.8-flash',
@@ -119,11 +127,14 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
           openRouterApiKey: '',
           openRouterModel: data.openRouterModel || 'openai/gpt-4o-mini',
           openRouterBaseUrl: data.openRouterBaseUrl || 'https://openrouter.ai/api/v1',
+          openRouterImageModel: data.openRouterImageModel || 'google/imagen-3',
           geminiApiKey: '',
           geminiModel: data.geminiModel || 'gemini-2.5-flash',
+          geminiImageModel: data.geminiImageModel || 'imagen-3.0-generate-002',
           llamaApiKey: '',
           llamaBaseUrl: data.llamaBaseUrl || 'https://api.groq.com/openai/v1',
           llamaModel: data.llamaModel || 'llama-3.3-70b-versatile',
+          llamaImageModel: data.llamaImageModel || '',
           mcpAgyUrl: data.mcpAgyUrl || 'https://backend-agy.saletub.com/mcp',
           mcpAgyToken: '',
           mcpAgyModel: data.mcpAgyModel || 'gemini-3.8-flash',
@@ -504,7 +515,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* Opção OpenRouter */}
                 <div
-                  onClick={() => setSelectedAiTab('openrouter')}
+                  onClick={() => switchAiTab('openrouter')}
                   className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
                     selectedAiTab === 'openrouter'
                       ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
@@ -549,7 +560,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                         onClick={(e) => {
                           e.stopPropagation();
                           setForm({ ...form, aiProvider: 'openrouter' });
-                          setSelectedAiTab('openrouter');
+                          switchAiTab('openrouter');
                         }}
                         className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
                       >
@@ -561,7 +572,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
 
                 {/* Opção Google Gemini */}
                 <div
-                  onClick={() => setSelectedAiTab('gemini')}
+                  onClick={() => switchAiTab('gemini')}
                   className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
                     selectedAiTab === 'gemini'
                       ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
@@ -606,7 +617,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                         onClick={(e) => {
                           e.stopPropagation();
                           setForm({ ...form, aiProvider: 'gemini' });
-                          setSelectedAiTab('gemini');
+                          switchAiTab('gemini');
                         }}
                         className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
                       >
@@ -618,7 +629,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
 
                 {/* Opção Llama / Groq / Ollama */}
                 <div
-                  onClick={() => setSelectedAiTab('llama')}
+                  onClick={() => switchAiTab('llama')}
                   className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
                     selectedAiTab === 'llama'
                       ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
@@ -663,7 +674,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                         onClick={(e) => {
                           e.stopPropagation();
                           setForm({ ...form, aiProvider: 'llama' });
-                          setSelectedAiTab('llama');
+                          switchAiTab('llama');
                         }}
                         className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
                       >
@@ -675,7 +686,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
 
                 {/* Opção Painel AGY (Cluster Antigravity / MCP) */}
                 <div
-                  onClick={() => setSelectedAiTab('painel-agy')}
+                  onClick={() => switchAiTab('painel-agy')}
                   className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
                     selectedAiTab === 'painel-agy'
                       ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600 shadow-xs'
@@ -720,7 +731,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                         onClick={(e) => {
                           e.stopPropagation();
                           setForm({ ...form, aiProvider: 'painel-agy' });
-                          setSelectedAiTab('painel-agy');
+                          switchAiTab('painel-agy');
                         }}
                         className="w-full text-center text-[11px] font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded transition-colors cursor-pointer"
                       >
@@ -778,7 +789,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                      Modelo do OpenRouter
+                      Modelo de Texto do OpenRouter
                     </label>
                     <input
                       type="text"
@@ -807,15 +818,31 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
 
                   <div>
                     <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                      URL Base da API (Opcional)
+                      Modelo de Imagem do OpenRouter (Opcional)
                     </label>
                     <input
                       type="text"
-                      value={form.openRouterBaseUrl}
-                      onChange={(e) => setForm({ ...form, openRouterBaseUrl: e.target.value })}
+                      value={form.openRouterImageModel || ''}
+                      onChange={(e) => setForm({ ...form, openRouterImageModel: e.target.value })}
                       className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
-                      placeholder="https://openrouter.ai/api/v1"
+                      placeholder="google/imagen-3"
                     />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {['google/imagen-3', 'black-forest-labs/flux-1-schnell', 'openai/dall-e-3'].map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setForm({ ...form, openRouterImageModel: m })}
+                          className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                            (form.openRouterImageModel || 'google/imagen-3') === m
+                              ? 'bg-purple-600 text-white border-purple-600 font-semibold'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {m.split('/')[1] || m}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -860,32 +887,63 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    Modelo do Gemini
-                  </label>
-                  <input
-                    type="text"
-                    value={form.geminiModel}
-                    onChange={(e) => setForm({ ...form, geminiModel: e.target.value })}
-                    className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
-                    placeholder="gemini-2.5-flash"
-                  />
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-1.5-pro'].map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setForm({ ...form, geminiModel: m })}
-                        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
-                          form.geminiModel === m
-                            ? 'bg-indigo-600 text-white border-indigo-600'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    ))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Modelo de Texto do Gemini
+                    </label>
+                    <input
+                      type="text"
+                      value={form.geminiModel}
+                      onChange={(e) => setForm({ ...form, geminiModel: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
+                      placeholder="gemini-2.5-flash"
+                    />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-1.5-pro'].map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setForm({ ...form, geminiModel: m })}
+                          className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                            form.geminiModel === m
+                              ? 'bg-indigo-600 text-white border-indigo-600'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Modelo de Imagem do Gemini (Google Imagen 3)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.geminiImageModel || ''}
+                      onChange={(e) => setForm({ ...form, geminiImageModel: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
+                      placeholder="imagen-3.0-generate-002"
+                    />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {['imagen-3.0-generate-002', 'imagen-3.0-fast-generate-001'].map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setForm({ ...form, geminiImageModel: m })}
+                          className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                            (form.geminiImageModel || 'imagen-3.0-generate-002') === m
+                              ? 'bg-purple-600 text-white border-purple-600 font-semibold'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -930,7 +988,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-[11px] font-medium text-slate-700 mb-1">
                       URL Base da API
@@ -946,7 +1004,7 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
 
                   <div>
                     <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                      Modelo
+                      Modelo de Texto
                     </label>
                     <input
                       type="text"
@@ -954,6 +1012,19 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                       onChange={(e) => setForm({ ...form, llamaModel: e.target.value })}
                       className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
                       placeholder="llama-3.3-70b-versatile"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                      Modelo de Imagem (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.llamaImageModel || ''}
+                      onChange={(e) => setForm({ ...form, llamaImageModel: e.target.value })}
+                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
+                      placeholder="ex: flux-1-schnell"
                     />
                   </div>
                 </div>
@@ -1224,177 +1295,6 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
                 placeholder="Insira as regras editoriais para a IA..."
               />
             </div>
-          </div>
-        </div>
-
-        {/* SEÇÃO: MOTOR & HOST DEDICADO DE GERAÇÃO DE IMAGENS (GOOGLE IMAGEN 3) */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <ImageIcon className="w-4 h-4 text-purple-600" />
-              <h2 className="text-sm font-semibold text-slate-900">Motor de Geração de Imagens & Host Dedicado</h2>
-            </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-purple-600" /> Google Imagen 3 (DeepMind)
-            </span>
-          </div>
-
-          <div className="p-5 space-y-4">
-            {/* Aviso de Regra Mandatória */}
-            <div className="p-3 bg-purple-50/50 rounded-lg border border-purple-200/60 text-xs text-purple-950 flex items-start gap-2.5">
-              <Shield className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
-              <div className="leading-relaxed">
-                <span className="font-semibold">Regra Mandatória de Qualidade & Anti-Plágio:</span>{' '}
-                Para matérias sem foto de origem ou que necessitem de recriação visual, o sistema utiliza exclusivamente o fotorrealismo do{' '}
-                <strong>Google Imagen 3 (DeepMind)</strong> ou um <strong>Host Dedicado</strong> homologado. É terminantemente bloqueado o uso de geradores de terceiros com marca d'água (como pollinations.ai, unsplash ou pexels).
-              </div>
-            </div>
-
-            {/* Seleção do Provedor de Imagem */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-800 mb-2">
-                Provedor de Imagem para Matérias (Fallback & Imagens Inéditas)
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* Opção 1: Google Imagen 3 Nativo */}
-                <div
-                  onClick={() => setForm({ ...form, imageProvider: 'google-imagen' })}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
-                    (form.imageProvider || 'google-imagen') === 'google-imagen'
-                      ? 'border-purple-600 bg-purple-50/50 ring-1 ring-purple-600 shadow-xs'
-                      : 'border-slate-200 hover:border-slate-300 bg-white'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                        Google Imagen 3
-                      </span>
-                      {(form.imageProvider || 'google-imagen') === 'google-imagen' && (
-                        <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold border border-purple-300 shadow-xs">
-                          Ativo
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      Utiliza o modelo oficial da DeepMind via API Gemini (imagen-3.0-generate-002) em 16:9 4k fotorrealista.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Opção 2: Host Dedicado Customizado */}
-                <div
-                  onClick={() => setForm({ ...form, imageProvider: 'custom-host' })}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
-                    form.imageProvider === 'custom-host'
-                      ? 'border-purple-600 bg-purple-50/50 ring-1 ring-purple-600 shadow-xs'
-                      : 'border-slate-200 hover:border-slate-300 bg-white'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <Globe className="w-3.5 h-3.5 text-purple-600" />
-                        Host Dedicado de Imagens
-                      </span>
-                      {form.imageProvider === 'custom-host' && (
-                        <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold border border-purple-300 shadow-xs">
-                          Ativo
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      Conecta a um endpoint REST próprio de geração de fotos (VPS dedicado, RunPod, ComfyUI ou microserviço).
-                    </p>
-                  </div>
-                </div>
-
-                {/* Opção 3: Sem Geração (Publicar sem imagem) */}
-                <div
-                  onClick={() => setForm({ ...form, imageProvider: 'disabled' })}
-                  className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
-                    form.imageProvider === 'disabled'
-                      ? 'border-purple-600 bg-purple-50/50 ring-1 ring-purple-600 shadow-xs'
-                      : 'border-slate-200 hover:border-slate-300 bg-white'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <Shield className="w-3.5 h-3.5 text-slate-500" />
-                        Publicar Sem Foto
-                      </span>
-                      {form.imageProvider === 'disabled' && (
-                        <span className="text-[10px] bg-slate-100 text-slate-800 px-2 py-0.5 rounded-full font-bold border border-slate-300 shadow-xs">
-                          Ativo
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      Caso o artigo original não tenha foto, publica a matéria sem imagem destacada. Zero uso de geradores externos.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Configurações do Host Dedicado de Imagens */}
-            {form.imageProvider === 'custom-host' && (
-              <div className="p-4 bg-purple-50/30 rounded-lg border border-purple-100 space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-purple-950 pb-2 border-b border-purple-100">
-                  <Key className="w-3.5 h-3.5 text-purple-600" />
-                  Parâmetros de Conexão com o Host Dedicado
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                      URL Endpoint do Host de Imagens
-                    </label>
-                    <input
-                      type="text"
-                      value={form.imageHostUrl || ''}
-                      onChange={(e) => setForm({ ...form, imageHostUrl: e.target.value })}
-                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-purple-500"
-                      placeholder="https://seu-servidor-imagens.com/api/generate"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      Endpoint POST que recebe {'{ prompt, aspectRatio, title }'} e retorna a imagem ou base64.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                      Chave / Token de Autenticação ({hasKeys.imageHost ? 'Configurada no Servidor ✓' : 'Opcional'})
-                    </label>
-                    <input
-                      type="password"
-                      value={form.imageHostApiKey || ''}
-                      onChange={(e) => setForm({ ...form, imageHostApiKey: e.target.value })}
-                      className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white focus:ring-1 focus:ring-purple-500"
-                      placeholder={hasKeys.imageHost ? '•••••••••••••••••••••••• (deixe vazio para manter)' : 'Bearer token ou API key'}
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      Enviado no header Authorization: Bearer {'<token>'}.
-                    </p>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-700 mb-1">
-                    Nome do Modelo no Host
-                  </label>
-                  <input
-                    type="text"
-                    value={form.imageHostModel || ''}
-                    onChange={(e) => setForm({ ...form, imageHostModel: e.target.value })}
-                    className="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-md bg-white"
-                    placeholder="imagen-3.0-generate-002"
-                  />
-                </div>
-              </div>
-            )}
           </div>
         </div>
 

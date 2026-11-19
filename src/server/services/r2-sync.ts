@@ -416,25 +416,151 @@ export async function generateContextualEditorialImage(
     const settings = dbRepo.getSystemSettings();
     const promptText = `${cleanPrompt}, editorial photojournalism, high quality 4k sharp focus, modern authentic photography, horizontal landscape 16:9, natural lighting, cinematic lighting, no text, no watermark`;
 
-    // ── ROTA A: Host Dedicado de Geração de Imagens (Custom Host) ─────────────
-    if (settings.imageHostUrl && settings.imageHostUrl.trim()) {
+    // Helper: Google Imagen 3 oficial via Gemini API
+    const tryGeminiImagen = async (): Promise<{ url: string; base64?: string } | null> => {
+      const geminiKey = process.env.GEMINI_API_KEY || (settings as any).geminiApiKey;
+      if (!geminiKey || geminiKey === 'MY_GEMINI_API_KEY') return null;
       try {
-        console.log(`[Image Generator] Enviando prompt para o Host Dedicado de Imagens: ${settings.imageHostUrl}`);
+        const modelName = settings.geminiImageModel || 'imagen-3.0-generate-002';
+        console.log(`[Image Generator] Gerando foto via Google Imagen 3 (${modelName})...`);
+        const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:predict?key=${geminiKey}`;
+        const res = await fetch(imagenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instances: [{ prompt: promptText }],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio: '16:9',
+              outputMimeType: 'image/jpeg'
+            }
+          }),
+          signal: AbortSignal.timeout(30000)
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
+          if (base64Bytes) {
+            const buffer = Buffer.from(base64Bytes, 'base64');
+            const filenameKey = `${articleId}-imagen3.jpg`;
+            const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
+            if (r2Url) {
+              console.log(`[Image Generator] Foto Google Imagen 3 gerada e salva no R2: ${r2Url}`);
+              return { url: r2Url, base64: `data:image/jpeg;base64,${base64Bytes}` };
+            }
+          }
+        }
+      } catch (geminiErr: any) {
+        console.warn('[Image Generator] Falha ao gerar via Google Imagen 3:', geminiErr.message);
+      }
+      return null;
+    };
+
+    // Helper: OpenRouter Image Generation
+    const tryOpenRouterImage = async (): Promise<{ url: string; base64?: string } | null> => {
+      const openRouterKey = (settings as any).openRouterApiKey || process.env.OPENROUTER_API_KEY;
+      if (!openRouterKey) return null;
+      const model = settings.openRouterImageModel || 'google/imagen-3';
+      console.log(`[Image Generator] Gerando foto via OpenRouter (Modelo: ${model})...`);
+
+      // 1. Tenta endpoint padrão /images/generations
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.APP_URL || 'https://auto-post-wordpress.internal',
+            'X-Title': settings.platformName || 'Auto Post WordPress AI',
+          },
+          body: JSON.stringify({
+            model,
+            prompt: promptText,
+            n: 1,
+            response_format: 'b64_json',
+          }),
+          signal: AbortSignal.timeout(35000),
+        });
+
+        if (res.ok) {
+          const data: any = await res.json();
+          const b64 = data.data?.[0]?.b64_json;
+          const imgUrl = data.data?.[0]?.url;
+
+          if (b64) {
+            const buffer = Buffer.from(b64, 'base64');
+            const filenameKey = `${articleId}-openrouter.jpg`;
+            const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
+            if (r2Url) {
+              console.log(`[Image Generator] Foto OpenRouter salva no R2: ${r2Url}`);
+              return { url: r2Url, base64: `data:image/jpeg;base64,${b64}` };
+            }
+          } else if (imgUrl && !isForbiddenImageService(imgUrl)) {
+            const mirrored = await ensureImageMirroredToR2(imgUrl, articleId, 'openrouter-foto');
+            if (mirrored) return mirrored;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Image Generator] Falha no endpoint /images/generations do OpenRouter:`, err.message);
+      }
+
+      // 2. Fallback: chat/completions para modelos com suporte a output de imagem
+      try {
+        const chatRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.APP_URL || 'https://auto-post-wordpress.internal',
+            'X-Title': settings.platformName || 'Auto Post WordPress AI',
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: promptText }],
+          }),
+          signal: AbortSignal.timeout(35000),
+        });
+
+        if (chatRes.ok) {
+          const chatData: any = await chatRes.json();
+          const content = chatData.choices?.[0]?.message?.content || '';
+          const urlMatch = content.match(/https?:\/\/[^\s"'<>\)]+\.(?:jpg|jpeg|png|webp)/i);
+          if (urlMatch && !isForbiddenImageService(urlMatch[0])) {
+            const mirrored = await ensureImageMirroredToR2(urlMatch[0], articleId, 'openrouter-foto');
+            if (mirrored) return mirrored;
+          }
+        }
+      } catch (chatErr: any) {
+        console.warn(`[Image Generator] Falha no endpoint /chat/completions do OpenRouter:`, chatErr.message);
+      }
+
+      return null;
+    };
+
+    // Helper: Custom / Llama / Dedicated Host
+    const tryCustomHostImage = async (): Promise<{ url: string; base64?: string } | null> => {
+      const customUrl = (settings.llamaBaseUrl || settings.imageHostUrl || '').trim();
+      const customKey = (settings.llamaApiKey || settings.imageHostApiKey || '').trim();
+      const customModel = settings.llamaImageModel || settings.imageHostModel || 'imagen-3.0-generate-002';
+      if (!customUrl) return null;
+
+      try {
+        console.log(`[Image Generator] Enviando prompt para Endpoint Customizado: ${customUrl}`);
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (settings.imageHostApiKey) {
-          headers['Authorization'] = `Bearer ${settings.imageHostApiKey}`;
+        if (customKey) {
+          headers['Authorization'] = `Bearer ${customKey}`;
         }
 
-        const hostRes = await fetch(settings.imageHostUrl.trim(), {
+        const hostRes = await fetch(customUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify({
             prompt: promptText,
             aspectRatio: '16:9',
             title: cleanPrompt,
-            model: settings.imageHostModel || 'imagen-3.0-generate-002'
+            model: customModel,
           }),
-          signal: AbortSignal.timeout(35000)
+          signal: AbortSignal.timeout(35000),
         });
 
         if (hostRes.ok) {
@@ -448,10 +574,7 @@ export async function generateContextualEditorialImage(
               const buffer = Buffer.from(b64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
               const filenameKey = `${articleId}-customhost.jpg`;
               const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
-              if (r2Url) {
-                console.log(`[Image Generator] Imagem gerada pelo Host Dedicado espelhada com sucesso no R2: ${r2Url}`);
-                return { url: r2Url, base64: `data:image/jpeg;base64,${b64}` };
-              }
+              if (r2Url) return { url: r2Url, base64: `data:image/jpeg;base64,${b64}` };
             } else if (externalUrl && !isForbiddenImageService(externalUrl)) {
               const mirrored = await ensureImageMirroredToR2(externalUrl, articleId, cleanPrompt);
               if (mirrored) return mirrored;
@@ -461,61 +584,40 @@ export async function generateContextualEditorialImage(
             const buffer = Buffer.from(arrayBuf);
             const filenameKey = `${articleId}-customhost.jpg`;
             const r2Url = await uploadImageBufferToR2(buffer, filenameKey, contentType);
-            if (r2Url) {
-              return { url: r2Url, base64: `data:${contentType};base64,${buffer.toString('base64')}` };
-            }
+            if (r2Url) return { url: r2Url, base64: `data:${contentType};base64,${buffer.toString('base64')}` };
           }
-        } else {
-          console.warn(`[Image Generator] Host Dedicado retornou HTTP ${hostRes.status}`);
         }
       } catch (hostErr: any) {
-        console.warn(`[Image Generator] Erro ao comunicar com Host Dedicado:`, hostErr.message);
+        console.warn(`[Image Generator] Erro ao comunicar com Endpoint Customizado:`, hostErr.message);
       }
+      return null;
+    };
+
+    // ── EXECUÇÃO RESPEITANDO O PROVEDOR DE IA ATIVO ───────────────────────────
+    const activeProvider = settings.aiProvider;
+    let result: { url: string; base64?: string } | null = null;
+
+    if (activeProvider === 'openrouter') {
+      result = await tryOpenRouterImage();
+      if (!result) result = await tryGeminiImagen();
+    } else if (activeProvider === 'gemini') {
+      result = await tryGeminiImagen();
+      if (!result) result = await tryOpenRouterImage();
+    } else if (activeProvider === 'llama') {
+      result = await tryCustomHostImage();
+      if (!result) result = await tryGeminiImagen();
+      if (!result) result = await tryOpenRouterImage();
+    } else {
+      // Outros motores (ex: painel-agy ou padrão)
+      result = await tryGeminiImagen();
+      if (!result) result = await tryOpenRouterImage();
     }
 
-    // ── ROTA B: Google Imagen 3 nativo via Gemini API Key ─────────────────────
-    const geminiKey = process.env.GEMINI_API_KEY || (settings as any).geminiApiKey;
-    if (geminiKey && geminiKey !== 'MY_GEMINI_API_KEY') {
-      try {
-        console.log(`[Image Generator] Gerando fotografia via Google Imagen 3 oficial (DeepMind)...`);
-        const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${geminiKey}`;
-
-        const res = await fetch(imagenUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            instances: [{ prompt: promptText }],
-            parameters: {
-              sampleCount: 1,
-              aspectRatio: '16:9',
-              outputMimeType: 'image/jpeg'
-            }
-          }),
-          signal: AbortSignal.timeout(25000)
-        });
-
-        if (res.ok) {
-          const data: any = await res.json();
-          const base64Bytes = data.predictions?.[0]?.bytesBase64Encoded;
-          if (base64Bytes) {
-            const buffer = Buffer.from(base64Bytes, 'base64');
-            const filenameKey = `${articleId}-imagen3.jpg`;
-            const r2Url = await uploadImageBufferToR2(buffer, filenameKey, 'image/jpeg');
-            if (r2Url) {
-              console.log(`[Image Generator] Foto Google Imagen 3 gerada e salva no R2: ${r2Url}`);
-              return {
-                url: r2Url,
-                base64: `data:image/jpeg;base64,${base64Bytes}`
-              };
-            }
-          }
-        }
-      } catch (geminiErr: any) {
-        console.warn('[Image Generator] Falha ao gerar via Google Imagen 3:', geminiErr.message);
-      }
+    if (result) {
+      return result;
     }
 
-    console.log('[Image Generator] Nenhuma chave/host de imagem disponível ou geração falhou. Publicando artigo SEM imagem destacada (Proibição Total de Pollinations).');
+    console.log('[Image Generator] Geração falhou ou nenhuma cota/chave disponível. Publicando artigo SEM imagem destacada (Proibição Total de Pollinations).');
   } catch (err: any) {
     console.warn('[Image Generator] Erro geral na geração editorial:', err.message);
   }
