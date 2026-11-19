@@ -176,6 +176,13 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
       if (!payload.imageHostApiKey) delete payload.imageHostApiKey;
       if (!payload.r2SecretAccessKey) delete payload.r2SecretAccessKey;
 
+      if (payload.openRouterBaseUrl) {
+        payload.openRouterBaseUrl = payload.openRouterBaseUrl.trim().replace(/\/+$/, '');
+      }
+      if (payload.llamaBaseUrl) {
+        payload.llamaBaseUrl = payload.llamaBaseUrl.trim().replace(/\/+$/, '');
+      }
+
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: {
@@ -261,18 +268,18 @@ export function SettingsView({ token, onSettingsUpdated }: SettingsViewProps) {
     if (targetProvider === 'openrouter') {
       apiKey = form.openRouterApiKey || '';
       model = form.openRouterModel || '';
-      baseUrl = form.openRouterBaseUrl || '';
+      baseUrl = (form.openRouterBaseUrl || '').trim().replace(/\/+$/, '');
     } else if (targetProvider === 'gemini') {
       apiKey = form.geminiApiKey || '';
       model = form.geminiModel || '';
     } else if (targetProvider === 'painel-agy') {
       apiKey = form.mcpAgyToken || '';
       model = form.mcpAgyModel || 'gemini-3.8-flash';
-      baseUrl = form.mcpAgyUrl || 'https://backend-agy.saletub.com/mcp';
+      baseUrl = (form.mcpAgyUrl || 'https://backend-agy.saletub.com/mcp').trim().replace(/\/+$/, '');
     } else {
       apiKey = form.llamaApiKey || '';
       model = form.llamaModel || '';
-      baseUrl = form.llamaBaseUrl || '';
+      baseUrl = (form.llamaBaseUrl || '').trim().replace(/\/+$/, '');
     }
 
     try {

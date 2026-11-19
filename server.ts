@@ -2027,6 +2027,13 @@ async function startServer() {
       delete updates.r2SecretAccessKey;
     }
 
+    if (typeof updates.openRouterBaseUrl === 'string') {
+      updates.openRouterBaseUrl = updates.openRouterBaseUrl.trim().replace(/\/+$/, '');
+    }
+    if (typeof updates.llamaBaseUrl === 'string') {
+      updates.llamaBaseUrl = updates.llamaBaseUrl.trim().replace(/\/+$/, '');
+    }
+
     const updated = dbRepo.updateSystemSettings(updates);
 
     dbRepo.appendAuditLog({
